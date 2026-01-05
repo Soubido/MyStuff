@@ -7,105 +7,160 @@ namespace NewRhinoGold.Core
 {
     public enum RingPosition
     {
-        BottomStart = 0,
-        Right = 1,
-        Top = 2,
-        Left = 3,
-        BottomEnd = 4
+        Bottom = 0, BottomRight = 1, Right = 2, TopRight = 3,
+        Top = 4, TopLeft = 5, Left = 6, BottomLeft = 7
     }
 
     public class RingDesignManager
     {
         private Dictionary<RingPosition, RingSection> _sections;
-        public bool MirrorX { get; set; } = true; 
+        public bool MirrorX { get; set; } = true;
 
         public RingDesignManager()
         {
             _sections = new Dictionary<RingPosition, RingSection>();
-            
-            // Standard-Kurve (ein einfaches Rechteck als Platzhalter)
-            var defCurve = new Rectangle3d(Plane.WorldXY, new Interval(-0.5, 0.5), new Interval(0, 1)).ToNurbsCurve();
 
-            InitSection(RingPosition.BottomStart, 0.0, "Bottom", defCurve);
-            InitSection(RingPosition.Right, 0.25, "Side", defCurve);
-            InitSection(RingPosition.Top, 0.5, "Top", defCurve);
-            InitSection(RingPosition.Left, 0.75, "Side", defCurve);
-            InitSection(RingPosition.BottomEnd, 1.0, "Bottom", defCurve);
+            // Standardwerte (Start mit Bottom Werten für alles)
+            // Wir setzen IsModified erst auf true, wenn DU es änderst.
+            // Beim Start ist alles "Standard".
+
+            double defaultW = 3.0;
+            double defaultH = 1.5;
+
+            // Parameter (Winkel) festlegen
+            InitSec(RingPosition.Bottom, 0.000, defaultW, defaultH);
+            InitSec(RingPosition.BottomRight, 0.125, defaultW, defaultH);
+            InitSec(RingPosition.Right, 0.250, defaultW, defaultH);
+            InitSec(RingPosition.TopRight, 0.375, defaultW, defaultH);
+            InitSec(RingPosition.Top, 0.500, defaultW, defaultH); // Top
+            InitSec(RingPosition.TopLeft, 0.625, defaultW, defaultH);
+            InitSec(RingPosition.Left, 0.750, defaultW, defaultH);
+            InitSec(RingPosition.BottomLeft, 0.875, defaultW, defaultH);
         }
 
-        private void InitSection(RingPosition pos, double t, string name, Curve c)
+        private void InitSec(RingPosition pos, double param, double w, double h)
         {
-            _sections[pos] = new RingSection { Parameter = t, Name = name, ProfileCurve = c.DuplicateCurve() };
+            _sections[pos] = new RingSection
+            {
+                Parameter = param,
+                Name = pos.ToString(),
+                Width = w,
+                Height = h,
+                IsModified = false // Noch nicht vom User angefasst
+            };
         }
 
         public RingSection GetSection(RingPosition pos) => _sections[pos];
 
-        public void UpdateSection(RingPosition pos, double w, double h)
+        // Die Haupt-Update Methode
+        public void UpdateSection(RingPosition pos, double w, double h, object profileSource)
+        {
+            if (!_sections.ContainsKey(pos)) return;
+
+            // 1. Das angeklickte Element updaten & markieren
+            UpdateSingleSection(pos, w, h, profileSource, true);
+
+            // 2. PROPAGATION (Die Auswirkung auf andere)
+
+            // Fall A: Bottom wurde geändert -> Wirkt auf ALLE, die noch nicht modifiziert sind.
+            if (pos == RingPosition.Bottom)
+            {
+                foreach (var key in _sections.Keys.ToList())
+                {
+                    if (key == RingPosition.Bottom) continue;
+
+                    var sec = _sections[key];
+                    // Nur überschreiben, wenn der User diesen Teil noch NICHT angefasst hat
+                    if (!sec.IsModified)
+                    {
+                        UpdateSingleSection(key, w, h, profileSource, false); // false = bleibt "unmodifiziert" (abhängig)
+                    }
+                }
+            }
+
+            // Fall B: Top wurde geändert -> Wirkt auf alle außer Bottom (und modifizierte).
+            else if (pos == RingPosition.Top)
+            {
+                foreach (var key in _sections.Keys.ToList())
+                {
+                    if (key == RingPosition.Top) continue;
+                    if (key == RingPosition.Bottom) continue; // Bottom wird von Top nicht verändert!
+
+                    var sec = _sections[key];
+                    if (!sec.IsModified)
+                    {
+                        UpdateSingleSection(key, w, h, profileSource, false);
+                    }
+                }
+            }
+
+            // Symmetrie behandeln (nach der Propagation, damit Spiegelung korrekt sitzt)
+            if (MirrorX)
+            {
+                var mPos = GetMirrorPosition(pos);
+                if (mPos != pos)
+                {
+                    // Spiegelung erzwingen
+                    UpdateSingleSection(mPos, w, h, profileSource, true); // Spiegelung gilt als modifiziert
+                }
+            }
+        }
+
+        private void UpdateSingleSection(RingPosition pos, double w, double h, object profileSource, bool markModified)
         {
             var sec = _sections[pos];
             sec.Width = w;
             sec.Height = h;
 
-            if (MirrorX) ApplySymmetry(pos, w, h);
-            
-            // Naht schließen
-            if (pos == RingPosition.BottomStart) Sync(RingPosition.BottomEnd, w, h);
-            if (pos == RingPosition.BottomEnd) Sync(RingPosition.BottomStart, w, h);
+            if (markModified) sec.IsModified = true;
+
+            if (profileSource is string name)
+            {
+                sec.ProfileName = name;
+                sec.CustomProfileCurve = null;
+            }
+            else if (profileSource is Curve crv)
+            {
+                sec.ProfileName = "Custom";
+                sec.CustomProfileCurve = crv.DuplicateCurve();
+            }
         }
 
-        private void ApplySymmetry(RingPosition pos, double w, double h)
+        private RingPosition GetMirrorPosition(RingPosition pos)
         {
-            if (pos == RingPosition.Right) Sync(RingPosition.Left, w, h);
-            if (pos == RingPosition.Left) Sync(RingPosition.Right, w, h);
+            // Simple Mirror Logic
+            if (pos == RingPosition.Right) return RingPosition.Left;
+            if (pos == RingPosition.Left) return RingPosition.Right;
+            if (pos == RingPosition.TopRight) return RingPosition.TopLeft;
+            if (pos == RingPosition.TopLeft) return RingPosition.TopRight;
+            if (pos == RingPosition.BottomRight) return RingPosition.BottomLeft;
+            if (pos == RingPosition.BottomLeft) return RingPosition.BottomRight;
+            return pos;
         }
-
-        private void Sync(RingPosition targetPos, double w, double h)
-        {
-            _sections[targetPos].Width = w;
-            _sections[targetPos].Height = h;
-            // Profilkurve müsste hier auch kopiert werden, wenn wir verschiedene Formen erlauben
-        }
-
-        public List<RingSection> GetSectionsForBuilder() => _sections.Values.ToList();
 
         public RingProfileSlot[] GetProfileSlots()
         {
-            var slotList = new System.Collections.Generic.List<RingProfileSlot>();
+            var slots = new List<RingProfileSlot>();
 
-            foreach (var entry in _sections)
+            foreach (var kvp in _sections)
             {
-                RingPosition pos = entry.Key;
-                RingSection sec = entry.Value;
+                var sec = kvp.Value;
+                double angle = sec.Parameter * 2.0 * Math.PI;
+                Curve baseCurve;
 
-                // 1. Winkel berechnen (basierend auf der Position)
-                double angle = GetAngleFromPosition(pos);
+                if (sec.CustomProfileCurve != null)
+                    baseCurve = RingProfileLibrary.CloseAndAnchor(sec.CustomProfileCurve);
+                else
+                    baseCurve = RingProfileLibrary.GetClosedProfile(sec.ProfileName);
 
-                // 2. Profilkurve aus der neuen Library holen
-                // Falls kein Name gesetzt ist, nehmen wir einen Standard (z.B. "Comfort Fit")
-                string profileName = string.IsNullOrEmpty(sec.ProfileName) ? "Comfort Fit" : sec.ProfileName;
-
-                Rhino.Geometry.Curve profileCurve = RingProfileLibrary.GetProfileCurve(profileName, sec.Width, sec.Height);
-
-                // 3. Slot erstellen und zur Liste hinzufügen
-                // HINWEIS: Dies setzt voraus, dass RingProfileSlot einen Konstruktor (double angle, Curve curve) hat.
-                slotList.Add(new RingProfileSlot(angle, profileCurve));
+                slots.Add(new RingProfileSlot(angle, baseCurve, sec.Width, sec.Height));
             }
 
-            return slotList.ToArray();
-        }
+            // Loop schließen (Slot bei 360°) - RingBuilder filtert den evtl raus, aber wir liefern ihn.
+            var btm = slots.First(s => Math.Abs(s.AngleRad) < 0.001);
+            slots.Add(new RingProfileSlot(2.0 * Math.PI, btm.BaseCurve, btm.Width, btm.Height));
 
-        // Kleine Hilfsmethode, um die Position in Bogenmaß (Radians) umzurechnen
-        private double GetAngleFromPosition(RingPosition pos)
-        {
-            switch (pos)
-            {
-                case RingPosition.Right: return 0.0;
-                case RingPosition.Top: return Math.PI * 0.5; // 90 Grad
-                case RingPosition.Left: return Math.PI;      // 180 Grad
-                case RingPosition.BottomStart: return Math.PI * 1.5; // 270 Grad
-                case RingPosition.BottomEnd: return Math.PI * 1.5;
-                default: return 0.0;
-            }
+            return slots.OrderBy(s => s.AngleRad).ToArray();
         }
     }
 }
