@@ -15,28 +15,11 @@ namespace NewRhinoGold.Commands
         {
             var dlg = new RingWizardDlg();
 
-            var result = dlg.ShowModal(RhinoEtoApp.MainWindow);
+            // WICHTIG: Show() statt ShowModal()
+            // Dadurch bleiben die Viewports bedienbar.
+            dlg.Show();
 
-            if (result)
-            {
-                // FIX: Wir holen jetzt den fertigen Ring (Breps), nicht mehr nur die Rail
-                var breps = dlg.GetFinalRing();
-
-                if (breps != null && breps.Length > 0)
-                {
-                    uint sn = doc.BeginUndoRecord("Create Ring Wizard");
-
-                    foreach (var b in breps)
-                    {
-                        doc.Objects.AddBrep(b);
-                    }
-
-                    doc.EndUndoRecord(sn);
-                    doc.Views.Redraw();
-                    return Result.Success;
-                }
-            }
-            return Result.Cancel;
+            return Result.Success;
         }
     }
 }

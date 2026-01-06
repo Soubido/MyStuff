@@ -5,68 +5,84 @@ using System.Linq;
 using Rhino.FileIO;
 using Rhino.Geometry;
 using System.Reflection;
+using Rhino;
 
 namespace NewRhinoGold.Helpers
 {
     public static class ProfileLoader
     {
-        // Cache: Damit wir die Datei nicht 1000x lesen, speichern wir geladene Kurven
         private static Dictionary<string, Curve> _curveCache = new Dictionary<string, Curve>();
-        private static string _profilesPath;
+        private static string _curvesPath;
 
-        // Initialisierung: Findet den Pfad
-        static ProfileLoader()
+        // Eigenschaft, um den Pfad sicher zu holen
+        public static string CurvesPath
         {
-            string assemblyPath = Assembly.GetExecutingAssembly().Location;
-            string assemblyDir = Path.GetDirectoryName(assemblyPath);
-            _profilesPath = Path.Combine(assemblyDir, "Profiles");
-
-            // Ordner erstellen, falls nicht existent
-            if (!Directory.Exists(_profilesPath))
+            get
             {
-                Directory.CreateDirectory(_profilesPath);
+                if (_curvesPath == null)
+                {
+                    try
+                    {
+                        string assemblyPath = Assembly.GetExecutingAssembly().Location;
+                        string assemblyDir = Path.GetDirectoryName(assemblyPath);
+                        _curvesPath = Path.Combine(assemblyDir, "Curves");
+                    }
+                    catch
+                    {
+                        _curvesPath = null;
+                    }
+                }
+                return _curvesPath;
             }
         }
 
-        // Gibt eine Liste aller .3dm Dateien zurück (ohne Endung)
         public static List<string> GetAvailableProfiles()
         {
-            if (!Directory.Exists(_profilesPath)) return new List<string>();
+            var path = CurvesPath;
+            if (string.IsNullOrEmpty(path) || !Directory.Exists(path))
+            {
+                // DEBUG: Sag dem User, wo der Ordner sein sollte
+                if (path != null)
+                    RhinoApp.WriteLine($"[RingWizard] Curves-Ordner nicht gefunden. Erwartet hier: {path}");
 
-            return Directory.GetFiles(_profilesPath, "*.3dm")
-                            .Select(Path.GetFileNameWithoutExtension)
-                            .ToList();
-        }
-
-        // Lädt die Kurve aus der Datei
-        public static Curve LoadProfile(string profileName)
-        {
-            // 1. Ist es schon im Cache?
-            if (_curveCache.ContainsKey(profileName)) 
-                return _curveCache[profileName].DuplicateCurve();
-
-            // 2. Pfad bauen
-            string path = Path.Combine(_profilesPath, profileName + ".3dm");
-            if (!File.Exists(path)) return CreateFallbackCircle(); // Datei fehlt? Nimm Kreis.
+                return new List<string>();
+            }
 
             try
             {
-                // 3. Rhino Datei lesen (File3dm liest ohne Rhino zu öffnen!)
-                var f3dm = File3dm.Read(path);
-                
-                // Wir nehmen die ERSTE Kurve, die wir finden
+                // Debug Ausgabe
+                var files = Directory.GetFiles(path, "*.3dm");
+                RhinoApp.WriteLine($"[RingWizard] {files.Length} Profile in '{path}' gefunden.");
+
+                return files.Select(Path.GetFileNameWithoutExtension).ToList();
+            }
+            catch (Exception ex)
+            {
+                RhinoApp.WriteLine($"[RingWizard] Fehler beim Lesen der Profile: {ex.Message}");
+                return new List<string>();
+            }
+        }
+
+        public static Curve LoadProfile(string profileName)
+        {
+            if (_curveCache.ContainsKey(profileName))
+                return _curveCache[profileName].DuplicateCurve();
+
+            var path = CurvesPath;
+            if (path == null) return null;
+
+            string filePath = Path.Combine(path, profileName + ".3dm");
+            if (!File.Exists(filePath)) return null;
+
+            try
+            {
+                var f3dm = File3dm.Read(filePath);
                 foreach (var obj in f3dm.Objects)
                 {
                     if (obj.Geometry is Curve c)
                     {
-                        // 4. SANITIZE: Kurve auf 0,0,0 zentrieren!
-                        // Das ist extrem wichtig, egal wo du sie gezeichnet hast.
                         BoundingBox bbox = c.GetBoundingBox(true);
                         c.Translate(Vector3d.Negate(new Vector3d(bbox.Center)));
-                        
-                        // Optional: Auf 1x1 Einheit normalisieren? 
-                        // Besser nicht, wir vertrauen darauf, dass Width/Height im Wizard das regelt.
-                        
                         _curveCache[profileName] = c;
                         return c.DuplicateCurve();
                     }
@@ -74,15 +90,9 @@ namespace NewRhinoGold.Helpers
             }
             catch
             {
-                // Fehler beim Lesen
+                // Ignorieren
             }
-
-            return CreateFallbackCircle();
-        }
-
-        private static Curve CreateFallbackCircle()
-        {
-            return new Circle(Plane.WorldXY, 0.5).ToNurbsCurve();
+            return null;
         }
     }
 }

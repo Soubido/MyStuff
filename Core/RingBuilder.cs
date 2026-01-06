@@ -11,15 +11,14 @@ namespace NewRhinoGold.Core
         public static Brep[] BuildRing(double radiusMM, RingProfileSlot[] slots, bool solid)
         {
             if (radiusMM < 1.0) radiusMM = 8.0;
-            if (slots == null || slots.Length < 2) return null;
+            // Mindestens 1 Slot
+            if (slots == null || slots.Length < 1) return null;
 
-            // 1. RAIL (Front Ansicht = WorldXZ)
-            // FIX: Manuelle Konstruktion der XZ-Ebene (Origin, X-Axis, Z-Axis)
+            // 1. RAIL (Finger-Innenseite)
             var plane = new Plane(Point3d.Origin, Vector3d.XAxis, Vector3d.ZAxis);
-
             var circle = new Circle(plane, radiusMM);
 
-            // Start bei 6 Uhr (unten). 
+            // Start unten bei 6 Uhr (-90°)
             circle.Rotate(-Math.PI / 2.0, plane.Normal, plane.Origin);
 
             Curve rail = circle.ToNurbsCurve();
@@ -29,38 +28,63 @@ namespace NewRhinoGold.Core
             var sweepShapes = new List<Curve>();
             var sweepParams = new List<double>();
 
-            // Filter: Letztes Profil bei 360° (t=1.0) rauswerfen für Closed Sweep
-            var validSlots = slots.Where(s => (s.AngleRad / (2.0 * Math.PI)) < 0.99).ToArray();
-
-            foreach (var slot in validSlots)
+            foreach (var slot in slots)
             {
                 if (slot.BaseCurve == null) continue;
 
                 Curve shape = slot.BaseCurve.DuplicateCurve();
 
-                // Skalieren
+                // A. Skalieren
                 BoundingBox bbox = shape.GetBoundingBox(true);
                 double currentW = bbox.Max.X - bbox.Min.X;
                 double currentH = bbox.Max.Y - bbox.Min.Y;
-
                 if (currentW < 0.001) currentW = 1;
                 if (currentH < 0.001) currentH = 1;
 
                 double factorX = slot.Width / currentW;
                 double factorY = slot.Height / currentH;
 
-                // Scale (Basis ist WorldXY für das Profil)
+                // Skalieren um WorldXY Origin
                 shape.Transform(Transform.Scale(Plane.WorldXY, factorX, factorY, 1.0));
 
-                // Position berechnen
+                // B. NACH AUSSEN BAUEN (Alignment)
+                // Profil so verschieben, dass MinY (unten) auf 0 liegt.
+                bbox = shape.GetBoundingBox(true);
+                double shiftUp = -bbox.Min.Y;
+                shape.Transform(Transform.Translation(0, shiftUp, 0));
+
+                // C. Manuelle Frame-Berechnung (WICHTIG!)
+                // Wir berechnen exakt, wie das Profil auf dem Ring sitzen muss.
+
                 double t = slot.AngleRad / (2.0 * Math.PI);
+                if (t > 1.0) t = 1.0;
 
-                Plane railFrame;
-                rail.PerpendicularFrameAt(t, out railFrame);
+                Point3d railPoint = rail.PointAt(t);
 
-                // Orientieren: Das Profil liegt flach auf WorldXY.
-                // Es muss senkrecht auf den RailFrame transformiert werden.
-                var orient = Transform.PlaneToPlane(Plane.WorldXY, railFrame);
+                // Vektoren berechnen:
+                // 1. Tangente (Richtung der Schiene)
+                Vector3d tangent = rail.TangentAt(t);
+
+                // 2. Radial (Dicke des Rings, nach Aussen)
+                // Da Zentrum (0,0,0), ist Vektor = Point - Origin.
+                Vector3d radial = railPoint - Point3d.Origin;
+                radial.Unitize();
+
+                // 3. Breite (Seitwärts, entlang Welt-Y für diesen Ring in XZ)
+                Vector3d sideways = Vector3d.YAxis;
+
+                // Ziel-Frame erstellen:
+                // Origin = Punkt auf Rail
+                // X-Achse (Profil-Breite) = Sideways (Welt-Y)
+                // Y-Achse (Profil-Höhe) = Radial (Nach Aussen)
+                // Z-Achse (Profil-Normale) = Tangent (Entlang Rail)
+
+                var targetPlane = new Plane(railPoint, sideways, radial);
+
+                // Mapping: WorldXY -> TargetPlane
+                // World X (Profilbreite) landet auf Target X (Sideways)
+                // World Y (Profilhöhe) landet auf Target Y (Radial/Outwards)
+                var orient = Transform.PlaneToPlane(Plane.WorldXY, targetPlane);
                 shape.Transform(orient);
 
                 sweepShapes.Add(shape);
@@ -69,23 +93,30 @@ namespace NewRhinoGold.Core
 
             // 3. SWEEP
             var sweep = new SweepOneRail();
-            sweep.ClosedSweep = true;    // Ring schließen
-            sweep.SetToRoadlikeTop();    // Oben bleibt Oben (wichtig für Profile)
+            // ClosedSweep = false, weil wir Anfang und Ende (t=0 und t=1) manuell übergeben haben.
+            // Das verhindert Probleme an der Nahtstelle.
+            sweep.ClosedSweep = false;
+
+            // Kein "RoadlikeTop" nötig, da wir die Frames manuell perfekt ausgerichtet haben.
+            // Freeform lässt die Interpolation natürlich fließen.
+            sweep.AngleToleranceRadians = 0.01;
             sweep.SweepTolerance = 0.001;
 
-            var breps = sweep.PerformSweep(rail, sweepShapes, sweepParams);
+            Brep[] breps = null;
+            try
+            {
+                // Versuch mit Parametern
+                breps = sweep.PerformSweep(rail, sweepShapes, sweepParams);
+            }
+            catch
+            {
+                // Fallback
+            }
 
-            // Fallback
             if (breps == null || breps.Length == 0)
             {
-                // Debug Extrusions (damit du siehst wo die Profile landen)
-                var debugBreps = new List<Brep>();
-                foreach (var s in sweepShapes)
-                {
-                    var extrusion = Surface.CreateExtrusion(s, Vector3d.YAxis * 0.1);
-                    if (extrusion != null) debugBreps.Add(extrusion.ToBrep());
-                }
-                return debugBreps.ToArray();
+                RhinoApp.WriteLine("FEHLER: Sweep fehlgeschlagen.");
+                return null;
             }
 
             // 4. CAPPING
