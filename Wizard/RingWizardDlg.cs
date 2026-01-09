@@ -23,7 +23,7 @@ namespace NewRhinoGold.Wizard
         private readonly RingDesignManager _manager;
         private readonly RingPreviewConduit _conduit;
 
-        // UI
+        // UI Controls
         private ListBox _listSizes;
         private NumericStepper _numDia, _numCirc;
         private DropDown _ddMaterials;
@@ -34,15 +34,19 @@ namespace NewRhinoGold.Wizard
         private Button _btnTopLeft, _btnTopRight, _btnBottomLeft, _btnBottomRight;
 
         private NumericStepper _numWidth, _numHeight;
+        private NumericStepper _numRot, _numOffsetY;
         private CheckBox _chkMirror;
+        private CheckBox _chkActive;
+        private CheckBox _chkFlip;
+        private Label _lblWeight;
 
-        private RingPosition _currentPos = RingPosition.Top;
+        private RingPosition _currentPos;
         private bool _isUpdatingUI = false;
 
         public RingWizardDlg()
         {
             Title = "Ring Wizard";
-            ClientSize = new Size(380, 720);
+            ClientSize = new Size(300, 600);
             Resizable = false;
             Topmost = true;
             Owner = RhinoEtoApp.MainWindow;
@@ -53,15 +57,11 @@ namespace NewRhinoGold.Wizard
 
             Content = BuildMainLayout();
 
-            // Sperre Updates während dem Laden
             _isUpdatingUI = true;
-
             FillSizeList();
             FillMaterialList();
-            FillProfileList(); // Hier werden Profile geladen
-
-            LoadPositionValues(RingPosition.Top);
-
+            FillProfileList();
+            LoadPositionValues(RingPosition.Bottom);
             _isUpdatingUI = false;
 
             Closed += (s, e) => {
@@ -70,52 +70,63 @@ namespace NewRhinoGold.Wizard
             };
 
             UpdateGeometry();
+            UpdateButtonColors();
         }
 
         private Control BuildMainLayout()
         {
-            var layout = new TableLayout { Padding = 10, Spacing = new Size(5, 5) };
+            // --- 1. SETTINGS SECTION ---
+            // KORREKTUR: Eto.Drawing.Fonts explizit verwendet
+            var grpSettings = new GroupBox { Text = "General Settings", Padding = 5, Font = Eto.Drawing.Fonts.Sans(8, Eto.Drawing.FontStyle.Bold) };
 
-            // 1. SETTINGS
-            var grpSettings = new GroupBox { Text = "Settings" };
-            _ddMaterials = new DropDown();
+            _ddMaterials = new DropDown { Height = 24 };
             _ddMaterials.SelectedValueChanged += (s, e) => UpdateGeometry();
-            _listSizes = new ListBox { Height = 60 };
+
+            _listSizes = new ListBox { Height = 50 };
             _listSizes.SelectedIndexChanged += (s, e) => UpdateGeometry();
-            _numDia = new NumericStepper { DecimalPlaces = 2, ReadOnly = true, Width = 60 };
-            _numCirc = new NumericStepper { DecimalPlaces = 2, ReadOnly = true, Width = 60 };
-            var infoLayout = new TableLayout
-            {
-                Spacing = new Size(5, 0),
-                Rows = { new TableRow("Dia:", _numDia), new TableRow("Cir:", _numCirc) }
-            };
-            var settingsRows = new TableLayout { Spacing = new Size(5, 5) };
-            settingsRows.Rows.Add(new TableRow("Material:", _ddMaterials));
-            settingsRows.Rows.Add(new TableRow(_listSizes, new TableCell(infoLayout, true)));
-            grpSettings.Content = settingsRows;
-            layout.Rows.Add(new TableRow(grpSettings));
 
-            // 2. PROFILE MAP
-            var grpMap = new GroupBox { Text = "Profile Position" };
-            var pixelLayout = new PixelLayout { Size = new Size(340, 220) };
-            int cx = 170; int cy = 110; int radius = 75;
+            _numDia = new NumericStepper { DecimalPlaces = 2, ReadOnly = true, Width = 60, Font = Eto.Drawing.Fonts.Sans(8) };
+            _numCirc = new NumericStepper { DecimalPlaces = 2, ReadOnly = true, Width = 60, Font = Eto.Drawing.Fonts.Sans(8) };
 
-            _ddProfile = new DropDown { Width = 110 };
+            _lblWeight = new Label { Text = "Weight: ", TextColor = Colors.Blue, Font = Eto.Drawing.Fonts.Sans(9, Eto.Drawing.FontStyle.Bold), VerticalAlignment = VerticalAlignment.Center };
 
-            // WICHTIG: Das Binding muss komplett sein!
+            var layoutSettings = new TableLayout { Spacing = new Size(5, 5) };
+
+            layoutSettings.Rows.Add(new TableRow(new Label { Text = "Material:", VerticalAlignment = VerticalAlignment.Center }, _ddMaterials));
+            layoutSettings.Rows.Add(new TableRow(new Label { Text = "Ring Size:", VerticalAlignment = VerticalAlignment.Center }, null));
+            layoutSettings.Rows.Add(new TableRow(_listSizes) { ScaleHeight = false });
+
+            var statsLayout = new TableLayout { Spacing = new Size(10, 0) };
+            statsLayout.Rows.Add(new TableRow(
+                new Label { Text = "Ø:", Font = Eto.Drawing.Fonts.Sans(8), VerticalAlignment = VerticalAlignment.Center },
+                _numDia,
+                new Label { Text = "Cir:", Font = Eto.Drawing.Fonts.Sans(8), VerticalAlignment = VerticalAlignment.Center },
+                _numCirc
+            ));
+            layoutSettings.Rows.Add(new TableRow(statsLayout));
+            layoutSettings.Rows.Add(new TableRow(_lblWeight));
+
+            grpSettings.Content = layoutSettings;
+
+
+            // --- 2. NAVIGATOR (MAP) ---
+            var grpMap = new GroupBox { Text = "Profile Navigator", Padding = 5, Font = Eto.Drawing.Fonts.Sans(8, Eto.Drawing.FontStyle.Bold) };
+
+            var pixelLayout = new PixelLayout { Size = new Size(340, 160) };
+            int cx = 170; int cy = 80; int radius = 60;
+
+            _ddProfile = new DropDown { Width = 110, Font = Eto.Drawing.Fonts.Sans(8) };
             _ddProfile.ItemTextBinding = new PropertyBinding<string>(nameof(ProfileListItem.Text));
-            _ddProfile.ItemKeyBinding = new PropertyBinding<string>(nameof(ProfileListItem.Key)); // NEU & WICHTIG
+            _ddProfile.ItemKeyBinding = new PropertyBinding<string>(nameof(ProfileListItem.Key));
             _ddProfile.ItemImageBinding = new PropertyBinding<Image>(nameof(ProfileListItem.Image));
-
             _ddProfile.SelectedValueChanged += (s, e) => SaveCurrentValues();
 
-            _btnPickCurve = new Button { Text = "Pick Crv", Width = 80, Height = 26 };
+            _btnPickCurve = new Button { Text = "Pick Curve", Width = 70, Height = 24, Font = Eto.Drawing.Fonts.Sans(8) };
             _btnPickCurve.Click += OnPickCurveClicked;
 
-            pixelLayout.Add(_ddProfile, cx - 55, cy - 25);
-            pixelLayout.Add(_btnPickCurve, cx - 40, cy + 10);
+            pixelLayout.Add(_ddProfile, cx - 55, cy - 28);
+            pixelLayout.Add(_btnPickCurve, cx - 35, cy + 8);
 
-            // Buttons
             _btnTop = AddCircularBtn(pixelLayout, "T", RingPosition.Top, cx, cy, radius, -90);
             _btnTopRight = AddCircularBtn(pixelLayout, "TR", RingPosition.TopRight, cx, cy, radius, -45);
             _btnRight = AddCircularBtn(pixelLayout, "R", RingPosition.Right, cx, cy, radius, 0);
@@ -124,51 +135,84 @@ namespace NewRhinoGold.Wizard
             _btnBottomLeft = AddCircularBtn(pixelLayout, "BL", RingPosition.BottomLeft, cx, cy, radius, 135);
             _btnLeft = AddCircularBtn(pixelLayout, "L", RingPosition.Left, cx, cy, radius, 180);
             _btnTopLeft = AddCircularBtn(pixelLayout, "TL", RingPosition.TopLeft, cx, cy, radius, 225);
-            grpMap.Content = pixelLayout;
-            layout.Rows.Add(new TableRow(grpMap));
 
-            // 3. EDIT
-            var grpEdit = new GroupBox { Text = "Dimensions" };
-            var editLayout = new TableLayout { Padding = 5, Spacing = new Size(5, 5) };
-            _numWidth = new NumericStepper { DecimalPlaces = 2, MinValue = 0.5, MaxValue = 20, Width = 70 };
-            _numHeight = new NumericStepper { DecimalPlaces = 2, MinValue = 0.5, MaxValue = 20, Width = 70 };
-            _chkMirror = new CheckBox { Text = "Mirror X", Checked = true };
+            grpMap.Content = pixelLayout;
+
+
+            // --- 3. PARAMETERS (EDIT) ---
+            var grpEdit = new GroupBox { Text = "Section Parameters", Padding = 5, Font = Eto.Drawing.Fonts.Sans(8, Eto.Drawing.FontStyle.Bold) };
+
+            _numWidth = new NumericStepper { DecimalPlaces = 2, MinValue = 0.5, MaxValue = 30, Width = 65, Increment = 0.1, Font = Eto.Drawing.Fonts.Sans(8) };
+            _numHeight = new NumericStepper { DecimalPlaces = 2, MinValue = 0.5, MaxValue = 30, Width = 65, Increment = 0.1, Font = Eto.Drawing.Fonts.Sans(8) };
+            _numRot = new NumericStepper { DecimalPlaces = 1, MinValue = -180, MaxValue = 180, Width = 65, Increment = 1.0, Font = Eto.Drawing.Fonts.Sans(8) };
+            _numOffsetY = new NumericStepper { DecimalPlaces = 2, MinValue = -10, MaxValue = 10, Width = 65, Increment = 0.1, Font = Eto.Drawing.Fonts.Sans(8) };
+
+            _chkMirror = new CheckBox { Text = "Mirror X", Checked = true, Font = Eto.Drawing.Fonts.Sans(8) };
+            _chkActive = new CheckBox { Text = "Active", Checked = true, Font = Eto.Drawing.Fonts.Sans(8) };
+            _chkFlip = new CheckBox { Text = "Flip", Checked = false, Font = Eto.Drawing.Fonts.Sans(8) };
+
             _numWidth.ValueChanged += (s, e) => SaveCurrentValues();
             _numHeight.ValueChanged += (s, e) => SaveCurrentValues();
+            _numRot.ValueChanged += (s, e) => SaveCurrentValues();
+            _numOffsetY.ValueChanged += (s, e) => SaveCurrentValues();
             _chkMirror.CheckedChanged += (s, e) => { _manager.MirrorX = _chkMirror.Checked == true; SaveCurrentValues(); };
-            editLayout.Rows.Add(new TableRow("Width:", _numWidth, _chkMirror));
-            editLayout.Rows.Add(new TableRow("Height:", _numHeight, null));
-            grpEdit.Content = editLayout;
-            layout.Rows.Add(new TableRow(grpEdit));
+            _chkActive.CheckedChanged += (s, e) => { if (!_isUpdatingUI) { _manager.ToggleActive(_currentPos); UpdateButtonColors(); UpdateGeometry(); } };
+            _chkFlip.CheckedChanged += (s, e) => { if (!_isUpdatingUI) { _manager.ToggleFlipProfile(_currentPos); UpdateGeometry(); } };
 
-            // 4. FOOTER
-            var btnBake = new Button { Text = "Bake & Close" };
+            var layoutEdit = new TableLayout { Spacing = new Size(5, 5) };
+
+            var checkLayout = new StackLayout { Orientation = Orientation.Horizontal, Spacing = 10, Items = { _chkActive, _chkMirror, _chkFlip } };
+            layoutEdit.Rows.Add(new TableRow(checkLayout));
+
+            var gridValues = new TableLayout { Spacing = new Size(5, 5) };
+
+            gridValues.Rows.Add(new TableRow(
+                new Label { Text = "Width:", VerticalAlignment = VerticalAlignment.Center, Font = Eto.Drawing.Fonts.Sans(8) }, _numWidth,
+                new Label { Text = "Height:", VerticalAlignment = VerticalAlignment.Center, Font = Eto.Drawing.Fonts.Sans(8) }, _numHeight
+            ));
+
+            gridValues.Rows.Add(new TableRow(
+                new Label { Text = "Rot (°):", VerticalAlignment = VerticalAlignment.Center, Font = Eto.Drawing.Fonts.Sans(8) }, _numRot,
+                new Label { Text = "Off Y:", VerticalAlignment = VerticalAlignment.Center, Font = Eto.Drawing.Fonts.Sans(8) }, _numOffsetY
+            ));
+
+            layoutEdit.Rows.Add(new TableRow(gridValues));
+            grpEdit.Content = layoutEdit;
+
+
+            // --- 4. FOOTER ---
+            var btnBake = new Button { Text = "Create Ring", Height = 26 };
             btnBake.Click += OnBakeClicked;
-            var btnCancel = new Button { Text = "Cancel" };
+            var btnCancel = new Button { Text = "Cancel", Height = 26 };
             btnCancel.Click += (s, e) => Close();
-            layout.Rows.Add(new TableRow { ScaleHeight = true });
-            layout.Rows.Add(new TableRow(new TableLayout { Spacing = new Size(5, 0), Rows = { new TableRow(null, btnBake, btnCancel) } }));
 
-            return layout;
+            var footerLayout = new TableLayout { Spacing = new Size(5, 0) };
+            footerLayout.Rows.Add(new TableRow(null, btnCancel, btnBake));
+
+            var rootLayout = new TableLayout { Padding = 10, Spacing = new Size(0, 10) };
+            rootLayout.Rows.Add(new TableRow(grpSettings));
+            rootLayout.Rows.Add(new TableRow(grpMap));
+            rootLayout.Rows.Add(new TableRow(grpEdit));
+            rootLayout.Rows.Add(new TableRow { ScaleHeight = true });
+
+            rootLayout.Rows.Add(new TableRow(new Panel { BackgroundColor = Colors.LightGrey, Height = 1 }));
+            rootLayout.Rows.Add(new TableRow(new Panel { Padding = new Padding(0, 10, 0, 0), Content = footerLayout }));
+
+            return rootLayout;
         }
-
-        // --- EVENTS ---
 
         private void OnBakeClicked(object sender, EventArgs e)
         {
             var finalRing = GetFinalRing();
             if (finalRing != null && finalRing.Length > 0)
             {
-                uint sn = RhinoDoc.ActiveDoc.BeginUndoRecord("Create Ring Wizard");
+                uint sn = RhinoDoc.ActiveDoc.BeginUndoRecord("Create Ring");
                 foreach (var b in finalRing) RhinoDoc.ActiveDoc.Objects.AddBrep(b);
                 RhinoDoc.ActiveDoc.EndUndoRecord(sn);
                 RhinoDoc.ActiveDoc.Views.Redraw();
                 Close();
             }
-            else
-            {
-                MessageBox.Show("Keine Geometrie erzeugt.", MessageBoxType.Error);
-            }
+            else { MessageBox.Show("Error: No geometry.", MessageBoxType.Error); }
         }
 
         private void OnPickCurveClicked(object sender, EventArgs e)
@@ -183,11 +227,11 @@ namespace NewRhinoGold.Wizard
                 var crv = go.Object(0).Curve();
                 if (crv != null)
                 {
-                    _manager.UpdateSection(_currentPos, _numWidth.Value, _numHeight.Value, crv);
-                    _isUpdatingUI = true;
-                    _ddProfile.SelectedKey = null; // Reset selection
-                    _isUpdatingUI = false;
-                    UpdateButtonColors(); UpdateGeometry();
+                    _manager.UpdateSection(_currentPos, _numWidth.Value, _numHeight.Value, _numRot.Value, _numOffsetY.Value, crv);
+                    bool old = _isUpdatingUI; _isUpdatingUI = true;
+                    _ddProfile.SelectedKey = null;
+                    _isUpdatingUI = old;
+                    UpdateGeometry();
                 }
             }
             this.Visible = true;
@@ -196,63 +240,65 @@ namespace NewRhinoGold.Wizard
         private void SaveCurrentValues()
         {
             if (_isUpdatingUI) return;
-
             string selectedName = null;
-
-            // Robustere Abfrage des ausgewählten Items
-            if (_ddProfile.SelectedValue is ProfileListItem pli)
-            {
-                selectedName = pli.Text;
-            }
-            else if (_ddProfile.SelectedKey != null)
-            {
-                selectedName = _ddProfile.SelectedKey;
-            }
+            if (_ddProfile.SelectedValue is ProfileListItem pli) selectedName = pli.Text;
+            else if (_ddProfile.SelectedKey != null) selectedName = _ddProfile.SelectedKey;
 
             if (!string.IsNullOrEmpty(selectedName))
-            {
-                _manager.UpdateSection(_currentPos, _numWidth.Value, _numHeight.Value, selectedName);
-            }
+                _manager.UpdateSection(_currentPos, _numWidth.Value, _numHeight.Value, _numRot.Value, _numOffsetY.Value, selectedName);
             else
             {
-                // Fallback: Custom Curve behalten oder D-Shape
                 var sec = _manager.GetSection(_currentPos);
                 if (sec.CustomProfileCurve != null)
-                    _manager.UpdateSection(_currentPos, _numWidth.Value, _numHeight.Value, sec.CustomProfileCurve);
+                    _manager.UpdateSection(_currentPos, _numWidth.Value, _numHeight.Value, _numRot.Value, _numOffsetY.Value, sec.CustomProfileCurve);
                 else
-                    _manager.UpdateSection(_currentPos, _numWidth.Value, _numHeight.Value, "D-Shape");
+                    _manager.UpdateSection(_currentPos, _numWidth.Value, _numHeight.Value, _numRot.Value, _numOffsetY.Value, "D-Shape");
             }
-
-            UpdateButtonColors();
             UpdateGeometry();
         }
 
-        // --- HELPERS ---
-
-        private void FillProfileList()
+        private void LoadPositionValues(RingPosition pos)
         {
-            var items = new List<ProfileListItem>();
-            var names = RingProfileLibrary.GetProfileNames(); // Holt Defaults + Custom
+            bool wasUpd = _isUpdatingUI;
+            _isUpdatingUI = true;
+            _currentPos = pos;
+            var sec = _manager.GetSection(pos);
 
-            if (names == null || names.Count == 0) names = new List<string> { "D-Shape" };
+            _numWidth.Value = sec.Width;
+            _numHeight.Value = sec.Height;
+            _numRot.Value = sec.Rotation;
+            _numOffsetY.Value = sec.OffsetY;
+            _chkActive.Checked = sec.IsActive;
+            _chkFlip.Checked = sec.FlipX;
 
-            foreach (var name in names)
+            bool found = false;
+            foreach (var item in _ddProfile.DataStore)
             {
-                var crv = RingProfileLibrary.GetOpenProfile(name);
-                items.Add(new ProfileListItem { Text = name, Image = GenerateProfileIcon(crv) });
+                if (item is ProfileListItem pli && pli.Text == sec.ProfileName) { _ddProfile.SelectedKey = pli.Key; found = true; break; }
             }
-
-            // Direktes Zuweisen
-            _ddProfile.DataStore = items;
-
-            if (items.Count > 0) _ddProfile.SelectedIndex = 0;
+            if (!found) _ddProfile.SelectedKey = null;
+            UpdateButtonColors();
+            _isUpdatingUI = wasUpd;
         }
 
-        // ... REST DER METHODEN (FillSizeList, FillMaterialList, UpdateGeometry, etc.) BITTE UNVERÄNDERT LASSEN ODER VOM VORHERIGEN CODE ÜBERNEHMEN ...
-        // Ich füge hier zur Sicherheit die wichtigen kurzen Helpers nochmal ein:
-
-        private void FillSizeList() { _listSizes.Items.Clear(); for (int i = 48; i <= 72; i++) _listSizes.Items.Add(new ListItem { Text = i.ToString(), Key = i.ToString() }); _listSizes.SelectedIndex = 6; }
-        private void FillMaterialList() { _ddMaterials.Items.Clear(); foreach (var mat in Densities.Metals) _ddMaterials.Items.Add(new ListItem { Text = mat.Name, Key = mat.Id }); string def = "metal.au750"; if (_ddMaterials.Items.Any(i => i.Key == def)) _ddMaterials.SelectedKey = def; else if (_ddMaterials.Items.Count > 0) _ddMaterials.SelectedIndex = 0; }
+        private void UpdateButtonColors()
+        {
+            void SetBtnColor(Button b, RingPosition p)
+            {
+                var sec = _manager.GetSection(p);
+                if (_currentPos == p) { b.BackgroundColor = Colors.DodgerBlue; b.TextColor = Colors.White; }
+                else if (sec.IsActive) { b.BackgroundColor = Colors.Orange; b.TextColor = Colors.White; }
+                else { b.BackgroundColor = Colors.LightGrey; b.TextColor = Colors.DarkGray; }
+            }
+            SetBtnColor(_btnTop, RingPosition.Top);
+            SetBtnColor(_btnTopLeft, RingPosition.TopLeft);
+            SetBtnColor(_btnTopRight, RingPosition.TopRight);
+            SetBtnColor(_btnLeft, RingPosition.Left);
+            SetBtnColor(_btnRight, RingPosition.Right);
+            SetBtnColor(_btnBottom, RingPosition.Bottom);
+            SetBtnColor(_btnBottomLeft, RingPosition.BottomLeft);
+            SetBtnColor(_btnBottomRight, RingPosition.BottomRight);
+        }
 
         private void UpdateGeometry()
         {
@@ -267,11 +313,33 @@ namespace NewRhinoGold.Wizard
             Curve rail = circle.ToNurbsCurve();
 
             System.Drawing.Color displayColor = System.Drawing.Color.Gold;
-            string matId = _ddMaterials.SelectedKey;
-            if (!string.IsNullOrEmpty(matId)) { var m = Densities.Get(matId); if (m != null) displayColor = m.DisplayColor; }
+            double density = 15.0;
 
-            var slots = _manager.GetProfileSlots();
-            var ringBreps = RingBuilder.BuildRing(radius, slots, true);
+            string matId = _ddMaterials.SelectedKey;
+            if (!string.IsNullOrEmpty(matId))
+            {
+                var m = Densities.Get(matId);
+                if (m != null)
+                {
+                    displayColor = m.DisplayColor;
+                    density = m.Density;
+                }
+            }
+
+            var buildData = _manager.GetBuildData();
+            var ringBreps = RingBuilder.BuildRing(radius, buildData.Slots, buildData.IsClosedLoop, true);
+
+            if (ringBreps != null)
+            {
+                double totalVol = 0;
+                foreach (var b in ringBreps) totalVol += b.GetVolume();
+                double grams = (totalVol / 1000.0) * density;
+                _lblWeight.Text = $"Weight: {grams:F2} g";
+            }
+            else
+            {
+                _lblWeight.Text = "Weight: n/a";
+            }
 
             _conduit.SetScene(rail, ringBreps, displayColor);
             RhinoDoc.ActiveDoc.Views.Redraw();
@@ -282,10 +350,11 @@ namespace NewRhinoGold.Wizard
             if (_listSizes.SelectedValue == null) return null;
             double size = double.Parse(_listSizes.SelectedValue.ToString());
             double radius = (size / Math.PI) / 2.0;
-            var slots = _manager.GetProfileSlots();
-            return RingBuilder.BuildRing(radius, slots, true);
+            var buildData = _manager.GetBuildData();
+            return RingBuilder.BuildRing(radius, buildData.Slots, buildData.IsClosedLoop, true);
         }
 
+        // Helpers
         private Image GenerateProfileIcon(Curve crv)
         {
             if (crv == null) return null;
@@ -308,62 +377,25 @@ namespace NewRhinoGold.Wizard
 
         private Button AddCircularBtn(PixelLayout layout, string text, RingPosition pos, int cx, int cy, int r, double angleDeg)
         {
-            var btn = new Button { Text = text, Size = new Size(34, 30) };
+            // Auch hier angepasst
+            var btn = new Button { Text = text, Size = new Size(28, 24), Font = Eto.Drawing.Fonts.Sans(7) };
             btn.Click += (s, e) => LoadPositionValues(pos);
             btn.Tag = pos;
             double rad = angleDeg * (Math.PI / 180.0);
-            int x = (int)(cx + r * Math.Cos(rad)) - 17;
-            int y = (int)(cy + r * Math.Sin(rad)) - 15;
+            int x = (int)(cx + r * Math.Cos(rad)) - 14;
+            int y = (int)(cy + r * Math.Sin(rad)) - 12;
             layout.Add(btn, x, y);
             return btn;
         }
 
-        private void LoadPositionValues(RingPosition pos)
+        private void FillSizeList() { _listSizes.Items.Clear(); for (int i = 48; i <= 72; i++) _listSizes.Items.Add(new ListItem { Text = i.ToString(), Key = i.ToString() }); _listSizes.SelectedIndex = 6; }
+        private void FillMaterialList() { _ddMaterials.Items.Clear(); foreach (var mat in Densities.Metals) _ddMaterials.Items.Add(new ListItem { Text = mat.Name, Key = mat.Id }); string def = "metal.au750"; if (_ddMaterials.Items.Any(i => i.Key == def)) _ddMaterials.SelectedKey = def; else if (_ddMaterials.Items.Count > 0) _ddMaterials.SelectedIndex = 0; }
+        private void FillProfileList()
         {
-            bool wasUpd = _isUpdatingUI;
-            _isUpdatingUI = true; // Verhindert Rückfeuern
-
-            _currentPos = pos;
-            var sec = _manager.GetSection(pos);
-            _numWidth.Value = sec.Width;
-            _numHeight.Value = sec.Height;
-
-            // Versuche Profil zu selektieren
-            bool found = false;
-            foreach (var item in _ddProfile.DataStore)
-            {
-                if (item is ProfileListItem pli && pli.Text == sec.ProfileName)
-                {
-                    _ddProfile.SelectedKey = pli.Key;
-                    found = true;
-                    break;
-                }
-            }
-            if (!found) _ddProfile.SelectedKey = null;
-
-            UpdateButtonColors();
-            _isUpdatingUI = wasUpd;
-        }
-
-        private void UpdateButtonColors()
-        {
-            void SetBtnColor(Button b, RingPosition p)
-            {
-                var sec = _manager.GetSection(p);
-                bool isSelected = (_currentPos == p);
-                bool isActive = sec.IsActive;
-                if (isSelected) { b.BackgroundColor = Colors.DodgerBlue; b.TextColor = Colors.White; }
-                else if (isActive) { b.BackgroundColor = Colors.Orange; b.TextColor = Colors.White; }
-                else { b.BackgroundColor = Colors.WhiteSmoke; b.TextColor = Colors.Black; }
-            }
-            SetBtnColor(_btnTop, RingPosition.Top);
-            SetBtnColor(_btnTopLeft, RingPosition.TopLeft);
-            SetBtnColor(_btnTopRight, RingPosition.TopRight);
-            SetBtnColor(_btnLeft, RingPosition.Left);
-            SetBtnColor(_btnRight, RingPosition.Right);
-            SetBtnColor(_btnBottom, RingPosition.Bottom);
-            SetBtnColor(_btnBottomLeft, RingPosition.BottomLeft);
-            SetBtnColor(_btnBottomRight, RingPosition.BottomRight);
+            var items = new List<ProfileListItem>();
+            var names = RingProfileLibrary.GetProfileNames(); if (names == null || names.Count == 0) names = new List<string> { "D-Shape" };
+            foreach (var name in names) { var crv = RingProfileLibrary.GetOpenProfile(name); items.Add(new ProfileListItem { Text = name, Image = GenerateProfileIcon(crv) }); }
+            _ddProfile.DataStore = items; if (items.Count > 0) _ddProfile.SelectedIndex = 0;
         }
     }
 }

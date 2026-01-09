@@ -1,89 +1,74 @@
 using System;
 using System.Collections.Generic;
-using Rhino.Geometry;
-using System.Linq;
 using Rhino;
+using Rhino.Geometry;
 
 namespace NewRhinoGold.Core
 {
     public static class RingBuilder
     {
-        public static Brep[] BuildRing(double radiusMM, RingProfileSlot[] slots, bool solid)
+        public static Brep[] BuildRing(double radiusMM, RingProfileSlot[] slots, bool isClosedLoop, bool solid)
         {
             if (radiusMM < 1.0) radiusMM = 8.0;
-            // Mindestens 1 Slot
             if (slots == null || slots.Length < 1) return null;
 
-            // 1. RAIL (Finger-Innenseite)
+            // 1. RAIL
             var plane = new Plane(Point3d.Origin, Vector3d.XAxis, Vector3d.ZAxis);
             var circle = new Circle(plane, radiusMM);
-
-            // Start unten bei 6 Uhr (-90°)
             circle.Rotate(-Math.PI / 2.0, plane.Normal, plane.Origin);
-
             Curve rail = circle.ToNurbsCurve();
             rail.Domain = new Interval(0, 1.0);
 
-            // 2. PROFILE VORBEREITEN
+            // 2. PROFILE PROCESSING
             var sweepShapes = new List<Curve>();
             var sweepParams = new List<double>();
+            Vector3d sideways = Vector3d.YAxis;
 
             foreach (var slot in slots)
             {
                 if (slot.BaseCurve == null) continue;
 
+                double t = slot.AngleRad / (2.0 * Math.PI);
+                if (t < 0.0) t = 0.0; if (t > 1.0) t = 1.0;
+
                 Curve shape = slot.BaseCurve.DuplicateCurve();
 
-                // A. Skalieren
+                // A. SKALIEREN
                 BoundingBox bbox = shape.GetBoundingBox(true);
                 double currentW = bbox.Max.X - bbox.Min.X;
                 double currentH = bbox.Max.Y - bbox.Min.Y;
-                if (currentW < 0.001) currentW = 1;
-                if (currentH < 0.001) currentH = 1;
+                if (currentW < 0.001) currentW = 1.0;
+                if (currentH < 0.001) currentH = 1.0;
+                shape.Transform(Transform.Scale(Plane.WorldXY, slot.Width / currentW, slot.Height / currentH, 1.0));
 
-                double factorX = slot.Width / currentW;
-                double factorY = slot.Height / currentH;
-
-                // Skalieren um WorldXY Origin
-                shape.Transform(Transform.Scale(Plane.WorldXY, factorX, factorY, 1.0));
-
-                // B. NACH AUSSEN BAUEN (Alignment)
-                // Profil so verschieben, dass MinY (unten) auf 0 liegt.
+                // B. ALIGNMENT (Auf Rail setzen)
+                // MinY auf 0 bringen (Radialer Kontaktpunkt)
                 bbox = shape.GetBoundingBox(true);
                 double shiftUp = -bbox.Min.Y;
                 shape.Transform(Transform.Translation(0, shiftUp, 0));
 
-                // C. Manuelle Frame-Berechnung (WICHTIG!)
-                // Wir berechnen exakt, wie das Profil auf dem Ring sitzen muss.
+                // C. ROTATION
+                if (Math.Abs(slot.Rotation) > 0.001)
+                {
+                    double rad = slot.Rotation * (Math.PI / 180.0);
+                    shape.Rotate(rad, Vector3d.ZAxis, Point3d.Origin);
+                }
 
-                double t = slot.AngleRad / (2.0 * Math.PI);
-                if (t > 1.0) t = 1.0;
+                // D. OFFSET Y (KORRIGIERT: Sideways Shift)
+                // Anforderung: Offset Y soll in global Y (Sideways) stattfinden.
+                // Global Y entspricht der lokalen X-Achse (Breite) im Mapping.
+                // Daher verschieben wir hier in X.
+                if (Math.Abs(slot.OffsetY) > 0.001)
+                {
+                    // Verschiebung in X (Lokal) -> Y (Global/Sideways)
+                    shape.Translate(slot.OffsetY, 0, 0);
+                }
 
+                // E. MAPPING
                 Point3d railPoint = rail.PointAt(t);
-
-                // Vektoren berechnen:
-                // 1. Tangente (Richtung der Schiene)
-                Vector3d tangent = rail.TangentAt(t);
-
-                // 2. Radial (Dicke des Rings, nach Aussen)
-                // Da Zentrum (0,0,0), ist Vektor = Point - Origin.
                 Vector3d radial = railPoint - Point3d.Origin;
                 radial.Unitize();
-
-                // 3. Breite (Seitwärts, entlang Welt-Y für diesen Ring in XZ)
-                Vector3d sideways = Vector3d.YAxis;
-
-                // Ziel-Frame erstellen:
-                // Origin = Punkt auf Rail
-                // X-Achse (Profil-Breite) = Sideways (Welt-Y)
-                // Y-Achse (Profil-Höhe) = Radial (Nach Aussen)
-                // Z-Achse (Profil-Normale) = Tangent (Entlang Rail)
-
                 var targetPlane = new Plane(railPoint, sideways, radial);
-
-                // Mapping: WorldXY -> TargetPlane
-                // World X (Profilbreite) landet auf Target X (Sideways)
-                // World Y (Profilhöhe) landet auf Target Y (Radial/Outwards)
                 var orient = Transform.PlaneToPlane(Plane.WorldXY, targetPlane);
                 shape.Transform(orient);
 
@@ -93,45 +78,40 @@ namespace NewRhinoGold.Core
 
             // 3. SWEEP
             var sweep = new SweepOneRail();
-            // ClosedSweep = false, weil wir Anfang und Ende (t=0 und t=1) manuell übergeben haben.
-            // Das verhindert Probleme an der Nahtstelle.
-            sweep.ClosedSweep = false;
-
-            // Kein "RoadlikeTop" nötig, da wir die Frames manuell perfekt ausgerichtet haben.
-            // Freeform lässt die Interpolation natürlich fließen.
+            sweep.ClosedSweep = isClosedLoop;
             sweep.AngleToleranceRadians = 0.01;
             sweep.SweepTolerance = 0.001;
 
             Brep[] breps = null;
-            try
+            try { breps = sweep.PerformSweep(rail, sweepShapes, sweepParams); } catch { }
+
+            if ((breps == null || breps.Length == 0) && isClosedLoop)
             {
-                // Versuch mit Parametern
+                sweep.ClosedSweep = false;
                 breps = sweep.PerformSweep(rail, sweepShapes, sweepParams);
             }
-            catch
-            {
-                // Fallback
-            }
 
-            if (breps == null || breps.Length == 0)
-            {
-                RhinoApp.WriteLine("FEHLER: Sweep fehlgeschlagen.");
-                return null;
-            }
+            if (breps == null || breps.Length == 0) return null;
 
-            // 4. CAPPING
-            if (solid)
+            // 4. SOLID CHECK
+            var result = new List<Brep>();
+            foreach (var b in breps)
             {
-                var result = new List<Brep>();
-                foreach (var b in breps)
+                b.Standardize();
+                b.JoinNakedEdges(0.001);
+
+                if (solid && !b.IsSolid)
                 {
-                    var capped = b.CapPlanarHoles(0.001);
-                    result.Add(capped ?? b);
+                    if (isClosedLoop) b.JoinNakedEdges(0.01);
+                    else
+                    {
+                        var capped = b.CapPlanarHoles(0.001);
+                        if (capped != null) { result.Add(capped); continue; }
+                    }
                 }
-                return result.ToArray();
+                result.Add(b);
             }
-
-            return breps;
+            return result.ToArray();
         }
     }
 }

@@ -5,279 +5,379 @@ using Eto.Forms;
 using Rhino;
 using Rhino.DocObjects;
 using Rhino.Geometry;
-using Rhino.UI;
 using NewRhinoGold.Core;
 using NewRhinoGold.BezelStudio;
 using NewRhinoGold.Helpers;
 
 namespace NewRhinoGold.Studio
 {
-	public class CutterStudioDlg : Dialog<bool>
-	{
-		// State
-		private List<GemSmartData> _selectedGems = new List<GemSmartData>();
-		private CutterPreviewConduit _previewConduit;
-		private bool _suspendUpdates = false;
+    public class CutterStudioDlg : Dialog<bool>
+    {
+        // --- STATUS ---
+        private List<GemSmartData> _selectedGems = new List<GemSmartData>();
+        private CutterPreviewConduit _previewConduit;
+        private bool _suspendUpdates = false;
 
-		// UI Controls
-		private Button _btnSelectGems, _btnBuild, _btnClose;
-		private NumericStepper _numScale, _numClearance;
-		private NumericStepper _numTopHeight, _numTopDia;
-		private NumericStepper _numSeatPos;
-		private NumericStepper _numBotHeight, _numBotDia;
-		private RadioButton _rbShapeRound, _rbShapeLibrary;
-		private GridView _gridLibrary;
-		private NumericStepper _numProfileRot;
-		private TabControl _tabControl;
+        // --- UI CONTROLS ---
+        private Button _btnSelectGems, _btnBuild, _btnClose;
 
-		public CutterStudioDlg()
-		{
-			Title = "Cutter Studio";
-			ClientSize = new Size(360, 550);
-			Topmost = true;
-			Resizable = false;
+        // Parameter
+        private NumericStepper _numScale, _numClearance;
+        private NumericStepper _numTopHeight, _numTopDia;
+        private NumericStepper _numSeatPos;
+        private NumericStepper _numBotHeight, _numBotDia;
+        private NumericStepper _numProfileRot;
 
-			_previewConduit = new CutterPreviewConduit();
+        // Shape Mode
+        private RadioButton _rbShapeRound, _rbShapeLibrary;
+        private GridView _gridLibrary;
 
-			Content = BuildLayout();
+        private TabControl _tabControl;
 
-			Shown += (s, e) => { _previewConduit.Enabled = true; UpdatePreview(); };
-			Closed += (s, e) => { _previewConduit.Enabled = false; RhinoDoc.ActiveDoc?.Views.Redraw(); };
-		}
+        public CutterStudioDlg()
+        {
+            Title = "Cutter Studio";
+            // Kompakte Größe wie angefordert
+            ClientSize = new Size(380, 450);
+            Topmost = true;
+            Resizable = false;
 
-		private Control BuildLayout()
-		{
-			_btnSelectGems = new Button { Text = "Select Gems", Height = 28 };
-			_btnSelectGems.Click += OnSelectGems;
+            _previewConduit = new CutterPreviewConduit();
 
-			_tabControl = new TabControl();
-			_tabControl.Pages.Add(new TabPage { Text = "Parameters", Content = BuildParamsTab() });
-			_tabControl.Pages.Add(new TabPage { Text = "Bottom Shape", Content = BuildShapeTab() });
+            Content = BuildLayout();
 
-			_btnBuild = new Button { Text = "Build Cutters", Height = 28 };
-			_btnBuild.Click += OnBuild;
+            // Events für Vorschau-Handling
+            Shown += (s, e) => { _previewConduit.Enabled = true; UpdatePreview(); };
+            Closed += (s, e) => { _previewConduit.Enabled = false; RhinoDoc.ActiveDoc?.Views.Redraw(); };
+        }
 
-			_btnClose = new Button { Text = "Close", Height = 28 };
-			_btnClose.Click += (s, e) => Close(false);
+        private Control BuildLayout()
+        {
+            // 1. HEADER AREA
+            _btnSelectGems = new Button { Text = "Select Gems", Height = 28 };
+            _btnSelectGems.Click += OnSelectGems;
 
-			var layout = new TableLayout { Padding = 10, Spacing = new Size(2, 4) };
-			layout.Rows.Add(_btnSelectGems);
-			layout.Rows.Add(_tabControl);
-			layout.Rows.Add(new Panel { Height = 4 });
-			layout.Rows.Add(new TableRow(null, _btnClose, _btnBuild));
+            var topLayout = new TableLayout { Padding = new Padding(10, 10, 10, 5), Spacing = new Size(5, 5) };
+            topLayout.Rows.Add(new TableRow(_btnSelectGems));
 
-			return layout;
-		}
+            // 2. TABS AREA
+            _tabControl = new TabControl();
+            _tabControl.Pages.Add(new TabPage { Text = "Parameters", Content = BuildParamsTab() });
+            _tabControl.Pages.Add(new TabPage { Text = "Bottom Shape", Content = BuildShapeTab() });
 
-		private Control BuildParamsTab()
-		{
-			_numScale = CreateStepper(100, 0);
-			_numClearance = CreateStepper(0.10, 2);
-			_numTopHeight = CreateStepper(100, 0);
-			_numTopDia = CreateStepper(100, 0);
-			_numSeatPos = CreateStepper(30, 0);
-			_numBotHeight = CreateStepper(150, 0);
-			_numBotDia = CreateStepper(70, 0);
+            // 3. ACTION AREA
+            _btnBuild = new Button { Text = "Build Cutters", Height = 28, Font = Eto.Drawing.Fonts.Sans(9, FontStyle.Bold) };
+            _btnBuild.Click += OnBuild;
 
-			var l = new TableLayout { Padding = 10, Spacing = new Size(2, 2) };
-			l.Rows.Add(CreateHeader("Global"));
-			l.Rows.Add(CreateRow("Scale % / Gap:", new StackLayout { Orientation = Orientation.Horizontal, Spacing = 5, Items = { _numScale, _numClearance } }));
-			l.Rows.Add(new Panel { Height = 4 });
-			l.Rows.Add(CreateHeader("Top Shaft (%)"));
-			l.Rows.Add(CreateRow("Height / Scale:", new StackLayout { Orientation = Orientation.Horizontal, Spacing = 5, Items = { _numTopHeight, _numTopDia } }));
-			l.Rows.Add(new Panel { Height = 4 });
-			l.Rows.Add(CreateHeader("Seat / Girdle"));
-			l.Rows.Add(CreateRow("Seat Level %:", _numSeatPos));
-			l.Rows.Add(new Panel { Height = 4 });
-			l.Rows.Add(CreateHeader("Bottom Shaft (%)"));
-			l.Rows.Add(CreateRow("Height / Scale:", new StackLayout { Orientation = Orientation.Horizontal, Spacing = 5, Items = { _numBotHeight, _numBotDia } }));
-			return new Scrollable { Content = l, Border = BorderType.None };
-		}
+            _btnClose = new Button { Text = "Close", Height = 28 };
+            _btnClose.Click += (s, e) => Close(false);
 
-		private Control BuildShapeTab()
-		{
-			_rbShapeRound = new RadioButton { Text = "Standard (Round)", Checked = true, Font = Eto.Drawing.Fonts.Sans(8) };
-			_rbShapeLibrary = new RadioButton(_rbShapeRound) { Text = "Library Profile", Font = Eto.Drawing.Fonts.Sans(8) };
+            var actionsLayout = new TableLayout { Spacing = new Size(5, 0) };
+            // Rechtsbündige Buttons durch leere Zelle links
+            actionsLayout.Rows.Add(new TableRow(null, _btnClose, _btnBuild));
 
-			_gridLibrary = new GridView { Height = 200, Enabled = false };
-			_gridLibrary.Columns.Add(new GridColumn { HeaderText = "Profile", DataCell = new ImageTextCell { ImageBinding = Binding.Property<ProfileItem, Image>(x => x.Preview), TextBinding = Binding.Property<ProfileItem, string>(x => x.Name) } });
-			_gridLibrary.DataStore = ProfileLibrary.Items;
-			_gridLibrary.SelectionChanged += (s, e) => UpdatePreview();
+            // MASTER LAYOUT
+            var mainLayout = new TableLayout { Padding = 0, Spacing = new Size(0, 0) };
+            mainLayout.Rows.Add(topLayout);
+            mainLayout.Rows.Add(new TableRow(_tabControl) { ScaleHeight = true });
 
-			_numProfileRot = CreateStepper(0);
+            // Trennlinie
+            mainLayout.Rows.Add(new TableRow(new Panel { BackgroundColor = Colors.LightGrey, Height = 1 }));
+            mainLayout.Rows.Add(new TableRow(new Panel { Content = actionsLayout, Padding = 10 }));
 
-			void UpdateEnabled()
-			{
-				_gridLibrary.Enabled = (_rbShapeLibrary.Checked == true);
-				UpdatePreview();
-			}
-			_rbShapeRound.CheckedChanged += (s, e) => UpdateEnabled();
-			_rbShapeLibrary.CheckedChanged += (s, e) => UpdateEnabled();
+            return mainLayout;
+        }
 
-			var l = new TableLayout { Padding = 10, Spacing = new Size(2, 4) };
-			l.Rows.Add(_rbShapeRound);
-			l.Rows.Add(_rbShapeLibrary);
-			l.Rows.Add(_gridLibrary);
-			l.Rows.Add(new Panel { Height = 8 });
-			l.Rows.Add(CreateRow("Rotation:", _numProfileRot));
-			return new Scrollable { Content = l, Border = BorderType.None };
-		}
+        private Control BuildParamsTab()
+        {
+            // Stepper Initialisierung
+            _numScale = CreateStepper(100, 0);
+            _numClearance = CreateStepper(0.10, 2);
+            _numTopHeight = CreateStepper(100, 0);
+            _numTopDia = CreateStepper(100, 0);
+            _numSeatPos = CreateStepper(30, 0);
+            _numBotHeight = CreateStepper(150, 0);
+            _numBotDia = CreateStepper(70, 0);
 
-		private CutterParameters GetParameters()
-		{
-			var p = new CutterParameters();
-			p.GlobalScale = _numScale.Value;
-			p.Clearance = _numClearance.Value;
-			p.TopHeight = _numTopHeight.Value;
-			p.TopDiameterScale = _numTopDia.Value;
-			p.SeatLevel = _numSeatPos.Value;
-			p.BottomHeight = _numBotHeight.Value;
-			p.BottomDiameterScale = _numBotDia.Value;
-			p.UseCustomProfile = (_rbShapeLibrary.Checked == true);
-			if (p.UseCustomProfile && _gridLibrary.SelectedItem is ProfileItem item)
-				p.ProfileId = item.Id;
-			p.ProfileRotation = _numProfileRot.Value;
-			return p;
-		}
+            // Lokale Helper für Zeilen-Layouts
+            Control CreatePair(string l1, Control c1, string l2, Control c2)
+            {
+                var t = new TableLayout { Spacing = new Size(5, 2) };
+                t.Rows.Add(new TableRow(
+                    new Label { Text = l1, VerticalAlignment = VerticalAlignment.Center, Font = Eto.Drawing.Fonts.Sans(8) },
+                    c1,
+                    new Label { Text = l2, VerticalAlignment = VerticalAlignment.Center, Font = Eto.Drawing.Fonts.Sans(8) },
+                    c2
+                ));
+                return t;
+            }
 
-		private void OnSelectGems(object sender, EventArgs e)
-		{
-			// ÄNDERUNG: Dialog ausblenden
-			this.Visible = false;
+            Control CreateSingle(string l1, Control c1)
+            {
+                var t = new TableLayout { Spacing = new Size(5, 2) };
+                t.Rows.Add(new TableRow(
+                    new Label { Text = l1, VerticalAlignment = VerticalAlignment.Center, Font = Eto.Drawing.Fonts.Sans(8) },
+                    c1,
+                    null // Füller
+                ));
+                return t;
+            }
 
-			try
-			{
-				var go = new Rhino.Input.Custom.GetObject();
-				// Minimaler Prompt, notwendig für Interaktion
-				go.SetCommandPrompt("Select Gems");
-				go.GeometryFilter = ObjectType.Brep | ObjectType.Mesh;
-				go.GetMultiple(1, 0);
+            // Group 1: Global
+            var grpGlobal = new GroupBox { Text = "Global Settings", Padding = 5, Font = Eto.Drawing.Fonts.Sans(8, FontStyle.Bold) };
+            var layGlobal = new TableLayout { Spacing = new Size(5, 5) };
+            layGlobal.Rows.Add(CreatePair("Scale %:", _numScale, "Gap:", _numClearance));
+            grpGlobal.Content = layGlobal;
 
-				if (go.CommandResult() == Rhino.Commands.Result.Success)
-				{
-					_selectedGems.Clear();
-					foreach (var objRef in go.Objects())
-					{
-						var rhinoObj = objRef.Object();
-						if (rhinoObj == null) continue;
+            // Group 2: Top Shaft
+            var grpTop = new GroupBox { Text = "Top Shaft (%)", Padding = 5, Font = Eto.Drawing.Fonts.Sans(8, FontStyle.Bold) };
+            var layTop = new TableLayout { Spacing = new Size(5, 5) };
+            layTop.Rows.Add(CreatePair("Height:", _numTopHeight, "Scale:", _numTopDia));
+            grpTop.Content = layTop;
 
-						var data = rhinoObj.Geometry.UserData.Find(typeof(GemSmartData)) as GemSmartData;
-						if (data != null)
-						{
-							_selectedGems.Add(data);
-						}
-						else
-						{
-							if (SelectionHelpers.IsGem(rhinoObj))
-							{
-								if (RhinoGoldHelper.TryGetGemData(rhinoObj, out Curve c, out Plane p, out double s))
-								{
-									_selectedGems.Add(new GemSmartData(c, p, "Unknown", s, "Default", 0));
-								}
-							}
-						}
-					}
-					UpdatePreview();
-				}
-			}
-			finally
-			{
-				// ÄNDERUNG: Dialog immer wieder einblenden, auch bei Abbruch
-				this.Visible = true;
-			}
-		}
+            // Group 3: Seat
+            var grpSeat = new GroupBox { Text = "Seat / Girdle", Padding = 5, Font = Eto.Drawing.Fonts.Sans(8, FontStyle.Bold) };
+            var laySeat = new TableLayout { Spacing = new Size(5, 5) };
+            laySeat.Rows.Add(CreateSingle("Seat Level %:", _numSeatPos));
+            grpSeat.Content = laySeat;
 
-		private void OnBuild(object sender, EventArgs e)
-		{
-			var p = GetParameters();
-			var doc = RhinoDoc.ActiveDoc;
+            // Group 4: Bottom Shaft
+            var grpBot = new GroupBox { Text = "Bottom Shaft (%)", Padding = 5, Font = Eto.Drawing.Fonts.Sans(8, FontStyle.Bold) };
+            var layBot = new TableLayout { Spacing = new Size(5, 5) };
+            layBot.Rows.Add(CreatePair("Height:", _numBotHeight, "Scale:", _numBotDia));
+            grpBot.Content = layBot;
 
-			uint sn = doc.BeginUndoRecord("Create Cutters");
+            // Stack Layout für vertikale Anordnung
+            var finalLayout = new StackLayout
+            {
+                Padding = 10,
+                Spacing = 5,
+                HorizontalContentAlignment = HorizontalAlignment.Stretch,
+                Items = {
+                    grpGlobal,
+                    grpTop,
+                    grpSeat,
+                    grpBot,
+                    new StackLayoutItem(null, true) // Spacer am Ende drückt alles nach oben
+                }
+            };
 
-			foreach (var gem in _selectedGems)
-			{
-				var parts = CutterBuilder.CreateCutter(gem, p);
-				foreach (var brep in parts)
-				{
-					var attr = doc.CreateDefaultAttributes();
-					attr.Name = "RG Cutter";
-					attr.ObjectColor = System.Drawing.Color.OrangeRed;
-					attr.ColorSource = ObjectColorSource.ColorFromObject;
-					doc.Objects.AddBrep(brep, attr);
-				}
-			}
+            return new Scrollable { Content = finalLayout, Border = BorderType.None };
+        }
 
-			doc.EndUndoRecord(sn);
-			doc.Views.Redraw();
+        private Control BuildShapeTab()
+        {
+            _rbShapeRound = new RadioButton { Text = "Standard (Round)", Checked = true, Font = Eto.Drawing.Fonts.Sans(8) };
+            _rbShapeLibrary = new RadioButton(_rbShapeRound) { Text = "Library Profile", Font = Eto.Drawing.Fonts.Sans(8) };
 
-			// ÄNDERUNG: Dialog schließen, nachdem gebaut wurde
-			Close(true);
-		}
+            _gridLibrary = new GridView { Height = 150, Enabled = false, Border = BorderType.Bezel };
+            _gridLibrary.Columns.Add(new GridColumn
+            {
+                HeaderText = "Profile",
+                Resizable = false,
+                AutoSize = true,
+                DataCell = new ImageTextCell
+                {
+                    ImageBinding = Binding.Property<ProfileItem, Image>(x => x.Preview),
+                    TextBinding = Binding.Property<ProfileItem, string>(x => x.Name)
+                }
+            });
+            // ProfileLibrary muss existieren (in Core/ProfileLibrary.cs)
+            _gridLibrary.DataStore = ProfileLibrary.Items;
+            _gridLibrary.SelectionChanged += (s, e) => UpdatePreview();
 
-		private void UpdatePreview()
-		{
-			if (_suspendUpdates) return;
-			if (_selectedGems.Count == 0)
-			{
-				_previewConduit.SetBreps(null);
-				RhinoDoc.ActiveDoc.Views.Redraw();
-				return;
-			}
+            _numProfileRot = CreateStepper(0);
 
-			var p = GetParameters();
-			var previewBreps = new List<Brep>();
+            // Logik zum Aktivieren/Deaktivieren der Liste
+            void UpdateEnabled()
+            {
+                _gridLibrary.Enabled = (_rbShapeLibrary.Checked == true);
+                UpdatePreview();
+            }
+            _rbShapeRound.CheckedChanged += (s, e) => UpdateEnabled();
+            _rbShapeLibrary.CheckedChanged += (s, e) => UpdateEnabled();
 
-			foreach (var gem in _selectedGems)
-			{
-				var parts = CutterBuilder.CreateCutter(gem, p);
-				previewBreps.AddRange(parts);
-			}
+            // Layouts
+            var grpMode = new GroupBox { Text = "Shape Mode", Padding = 5, Font = Eto.Drawing.Fonts.Sans(8, FontStyle.Bold) };
+            var modeLayout = new TableLayout { Spacing = new Size(5, 5) };
+            modeLayout.Rows.Add(_rbShapeRound);
+            modeLayout.Rows.Add(_rbShapeLibrary);
+            grpMode.Content = modeLayout;
 
-			_previewConduit.SetBreps(previewBreps);
-			RhinoDoc.ActiveDoc.Views.Redraw();
-		}
+            var grpRot = new GroupBox { Text = "Adjustments", Padding = 5, Font = Eto.Drawing.Fonts.Sans(8, FontStyle.Bold) };
+            var rotLayout = new TableLayout { Spacing = new Size(5, 5) };
+            rotLayout.Rows.Add(new TableRow(new Label { Text = "Rotation:", VerticalAlignment = VerticalAlignment.Center, Font = Eto.Drawing.Fonts.Sans(8) }, _numProfileRot, null));
+            grpRot.Content = rotLayout;
 
-		// Helpers
-		private NumericStepper CreateStepper(double v, int d = 0)
-		{
-			var s = new NumericStepper { Value = v, DecimalPlaces = d, Width = 60, Font = Eto.Drawing.Fonts.Sans(8) };
-			s.ValueChanged += (o, e) => UpdatePreview();
-			return s;
-		}
-		private TableRow CreateRow(string t, Control c) => new TableRow(new Label { Text = t, VerticalAlignment = VerticalAlignment.Center, Font = Eto.Drawing.Fonts.Sans(8) }, c);
-		private Label CreateHeader(string t) => new Label { Text = t, Font = Eto.Drawing.Fonts.Sans(8, Eto.Drawing.FontStyle.Bold) };
-	}
+            var mainLayout = new TableLayout { Padding = 10, Spacing = new Size(5, 5) };
+            mainLayout.Rows.Add(grpMode);
+            mainLayout.Rows.Add(new Label { Text = "Library Selection:", Font = Eto.Drawing.Fonts.Sans(8) });
+            mainLayout.Rows.Add(new TableRow(_gridLibrary) { ScaleHeight = true });
+            mainLayout.Rows.Add(grpRot);
 
-	// Vorschau-Conduit
-	public class CutterPreviewConduit : Rhino.Display.DisplayConduit
-	{
-		private List<Brep> _breps;
-		private System.Drawing.Color _color = System.Drawing.Color.OrangeRed;
+            return new Scrollable { Content = mainLayout, Border = BorderType.None };
+        }
 
-		public void SetBreps(List<Brep> breps)
-		{
-			_breps = breps;
-		}
+        // --- LOGIK & EVENTS ---
 
-		protected override void CalculateBoundingBox(Rhino.Display.CalculateBoundingBoxEventArgs e)
-		{
-			base.CalculateBoundingBox(e);
-			if (_breps != null)
-			{
-				foreach (var b in _breps)
-					e.IncludeBoundingBox(b.GetBoundingBox(false));
-			}
-		}
+        private CutterParameters GetParameters()
+        {
+            var p = new CutterParameters();
+            p.GlobalScale = _numScale.Value;
+            p.Clearance = _numClearance.Value;
+            p.TopHeight = _numTopHeight.Value;
+            p.TopDiameterScale = _numTopDia.Value;
+            p.SeatLevel = _numSeatPos.Value;
+            p.BottomHeight = _numBotHeight.Value;
+            p.BottomDiameterScale = _numBotDia.Value;
 
-		protected override void PostDrawObjects(Rhino.Display.DrawEventArgs e)
-		{
-			base.PostDrawObjects(e);
-			if (_breps != null)
-			{
-				var mat = new Rhino.Display.DisplayMaterial(_color, 0.6);
-				foreach (var b in _breps)
-					e.Display.DrawBrepShaded(b, mat);
-			}
-		}
-	}
+            p.UseCustomProfile = (_rbShapeLibrary.Checked == true);
+            if (p.UseCustomProfile && _gridLibrary.SelectedItem is ProfileItem item)
+                p.ProfileId = item.Id;
+
+            p.ProfileRotation = _numProfileRot.Value;
+            return p;
+        }
+
+        private void OnSelectGems(object sender, EventArgs e)
+        {
+            this.Visible = false;
+            try
+            {
+                var go = new Rhino.Input.Custom.GetObject();
+                go.SetCommandPrompt("Select Gems");
+                go.GeometryFilter = ObjectType.Brep | ObjectType.Mesh;
+                go.GetMultiple(1, 0);
+
+                if (go.CommandResult() == Rhino.Commands.Result.Success)
+                {
+                    _selectedGems.Clear();
+                    foreach (var objRef in go.Objects())
+                    {
+                        var rhinoObj = objRef.Object();
+                        if (rhinoObj == null) continue;
+
+                        // Versuche SmartData zu finden (aus Core/GemSmartData.cs)
+                        var data = rhinoObj.Geometry.UserData.Find(typeof(GemSmartData)) as GemSmartData;
+                        if (data != null)
+                        {
+                            _selectedGems.Add(data);
+                        }
+                        else
+                        {
+                            // Fallback für "dumme" Geometrie, die wie ein Stein aussieht
+                            if (SelectionHelpers.IsGem(rhinoObj))
+                            {
+                                if (RhinoGoldHelper.TryGetGemData(rhinoObj, out Curve c, out Plane p, out double s))
+                                {
+                                    _selectedGems.Add(new GemSmartData(c, p, "Unknown", s, "Default", 0));
+                                }
+                            }
+                        }
+                    }
+                    UpdatePreview();
+                }
+            }
+            finally
+            {
+                this.Visible = true;
+            }
+        }
+
+        private void OnBuild(object sender, EventArgs e)
+        {
+            var p = GetParameters();
+            var doc = RhinoDoc.ActiveDoc;
+
+            uint sn = doc.BeginUndoRecord("Create Cutters");
+
+            foreach (var gem in _selectedGems)
+            {
+                // CutterBuilder (aus NewRhinoGold.BezelStudio) nutzen
+                var parts = CutterBuilder.CreateCutter(gem, p);
+                if (parts == null) continue;
+
+                foreach (var brep in parts)
+                {
+                    var attr = doc.CreateDefaultAttributes();
+
+                    // HIER WIRD DER NAME GESETZT
+                    attr.Name = "RG Cutter";
+
+                    attr.ObjectColor = System.Drawing.Color.OrangeRed;
+                    attr.ColorSource = ObjectColorSource.ColorFromObject;
+                    doc.Objects.AddBrep(brep, attr);
+                }
+            }
+
+            doc.EndUndoRecord(sn);
+            doc.Views.Redraw();
+            Close(true);
+        }
+
+        private void UpdatePreview()
+        {
+            if (_suspendUpdates) return;
+            if (_selectedGems.Count == 0)
+            {
+                _previewConduit.SetBreps(null);
+                RhinoDoc.ActiveDoc.Views.Redraw();
+                return;
+            }
+
+            var p = GetParameters();
+            var previewBreps = new List<Brep>();
+
+            foreach (var gem in _selectedGems)
+            {
+                var parts = CutterBuilder.CreateCutter(gem, p);
+                if (parts != null)
+                    previewBreps.AddRange(parts);
+            }
+
+            _previewConduit.SetBreps(previewBreps);
+            RhinoDoc.ActiveDoc.Views.Redraw();
+        }
+
+        // --- HELPER ---
+        private NumericStepper CreateStepper(double v, int d = 0)
+        {
+            var s = new NumericStepper { Value = v, DecimalPlaces = d, Width = 60, Font = Eto.Drawing.Fonts.Sans(8) };
+            s.ValueChanged += (o, e) => UpdatePreview();
+            return s;
+        }
+    }
+
+    // --- CONDUIT ---
+    public class CutterPreviewConduit : Rhino.Display.DisplayConduit
+    {
+        private List<Brep> _breps;
+        private System.Drawing.Color _color = System.Drawing.Color.OrangeRed;
+
+        public void SetBreps(List<Brep> breps)
+        {
+            _breps = breps;
+        }
+
+        protected override void CalculateBoundingBox(Rhino.Display.CalculateBoundingBoxEventArgs e)
+        {
+            base.CalculateBoundingBox(e);
+            if (_breps != null)
+            {
+                foreach (var b in _breps)
+                    e.IncludeBoundingBox(b.GetBoundingBox(false));
+            }
+        }
+
+        protected override void PostDrawObjects(Rhino.Display.DrawEventArgs e)
+        {
+            base.PostDrawObjects(e);
+            if (_breps != null)
+            {
+                var mat = new Rhino.Display.DisplayMaterial(_color, 0.6);
+                foreach (var b in _breps)
+                    e.Display.DrawBrepShaded(b, mat);
+            }
+        }
+    }
 }

@@ -4,25 +4,25 @@ namespace NewRhinoGold.Core
 {
     public class RingSection
     {
-        public double Parameter { get; set; }
         public string Name { get; set; }
+        public double Parameter { get; set; } // 0.0 bis 1.0
 
-        // WICHTIG: Standardwert setzen, damit er nie null ist!
-        public string ProfileName { get; set; } = "D-Shape";
-
-        public Curve CustomProfileCurve { get; set; } = null;
+        // Dimensionen
         public double Width { get; set; }
         public double Height { get; set; }
 
-        public bool IsModified { get; set; } = false;
-        public bool IsActive { get; set; } = false;
+        // --- NEUE PARAMETER ---
+        public double Rotation { get; set; } = 0; // in Grad
+        public double OffsetY { get; set; } = 0;  // in mm (Verschiebung vom Rail weg)
 
-        public RingSection Clone()
-        {
-            var copy = (RingSection)this.MemberwiseClone();
-            if (this.CustomProfileCurve != null)
-                copy.CustomProfileCurve = this.CustomProfileCurve.DuplicateCurve();
-            return copy;
-        }
+        // Profil
+        public string ProfileName { get; set; }
+        public Curve CustomProfileCurve { get; set; }
+
+        // Status
+        public bool IsActive { get; set; } = true;
+        public bool IsModified { get; set; } = false;
+        public bool FlipX { get; set; } = false;
+        public bool FlipY { get; set; } = false;
     }
 }
