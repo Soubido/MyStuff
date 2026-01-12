@@ -92,7 +92,7 @@ namespace NewRhinoGold.Commands
             {
                 // Logik für Bezels
                 // Hinweis: Namespace für BezelSmartData ggf. anpassen
-                bool hasSmartData = obj.Geometry?.UserData.Find(typeof(BezelStudio.BezelSmartData)) != null;
+                bool hasSmartData = obj.Geometry?.UserData.Find(typeof(Core.BezelSmartData)) != null;
                 bool hasUserString = obj.Attributes.GetUserString("RG BEZEL") != null;
                 return hasSmartData || hasUserString;
             });

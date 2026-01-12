@@ -26,6 +26,11 @@ namespace NewRhinoGold.Core
         // NEU: Für Reporting & Stücklisten
         public string MaterialName { get; set; } = "Default";
         public double CaratWeight { get; set; } = 0.0;
+        // Ergänzung in GemSmartData.cs
+        public double TablePercent { get; set; }
+        public double CrownHeightPercent { get; set; }
+        public double GirdleThicknessPercent { get; set; }
+        public double PavilionHeightPercent { get; set; }
 
         public GemSmartData()
         {

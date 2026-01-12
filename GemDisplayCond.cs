@@ -1,135 +1,113 @@
-﻿using Rhino;
-using Rhino.ApplicationSettings;
+﻿using System.Collections.Generic;
 using Rhino.Display;
+using Rhino.DocObjects;
 using Rhino.Geometry;
-using System;
-using System.IO;
+using System.Drawing;
 
-namespace NewRhinoGold
+namespace NewRhinoGold.Core
 {
-    /// <summary>
-    /// DisplayConduit für die Vorschau der erzeugten Steine.
-    /// Unterstützt nun dynamische Farbänderungen.
-    /// </summary>
     public class GemDisplayCond : DisplayConduit
     {
+        private IEnumerable<Brep> _breps;
+        private IEnumerable<Curve> _curves; // Wieder hinzugefügt
+
+        private Color _color = Color.Gold;
         private DisplayMaterial _material;
-        private Brep[] _breps;
-        private Curve[] _curves;
-        private Point3d[] _points;
-
-        // Standardfarbe (System.Drawing.Color für Kompatibilität mit RhinoCommon Draw-Methoden)
-        private System.Drawing.Color _drawColor;
-
-        private Point3d? _p1;
-        private Point3d? _p2;
 
         public GemDisplayCond()
         {
-            _material = new DisplayMaterial();
-            _material.IsTwoSided = true; // Wichtig damit man den Stein auch von innen sieht falls offen
-
-            // Initial: Standard Rhino Feedback Farbe
-            _drawColor = AppearanceSettings.FeedbackColor;
+            // Initial Material erstellen
+            UpdateMaterial();
         }
 
+        // --- FEHLENDE METHODEN (FIX FÜR CS1061) ---
+
+        // Wrapper für die Basis-Property 'Enabled'
         public void Enable()
         {
-            if (!Enabled) Enabled = true;
+            this.Enabled = true;
         }
 
         public void Disable()
         {
-            if (Enabled) Enabled = false;
+            this.Enabled = false;
         }
 
-        /// <summary>
-        /// Setzt die Darstellungsfarbe für Wires und Kurven.
-        /// </summary>
-        public void SetColor(System.Drawing.Color color)
-        {
-            _drawColor = color;
-        }
-
-        public void setbreps(Brep[] breps)
-        {
-            _breps = breps;
-        }
-
-        public void setcurves(Curve[] curves)
+        // Methode zum Setzen von Kurven (wird von HeadStudio/GemCreator benötigt)
+        public void setcurves(IEnumerable<Curve> curves)
         {
             _curves = curves;
         }
 
-        public void setpoints(Point3d[] points)
+        // -------------------------------------------
+
+        public void setbreps(IEnumerable<Brep> breps)
         {
-            _points = points;
+            _breps = breps;
         }
 
-        public void setpoint2(Point3d p1, Point3d p2)
+        public void SetColor(Color c)
         {
-            _p1 = p1;
-            _p2 = p2;
+            _color = c;
+            UpdateMaterial();
+        }
+
+        private void UpdateMaterial()
+        {
+            _material = new DisplayMaterial();
+            _material.Diffuse = _color;
+
+            // Transparenz für Breps (0.0 = solid, 1.0 = unsichtbar)
+            _material.Transparency = 0.6;
+            _material.Shine = 0.4;
         }
 
         protected override void CalculateBoundingBox(CalculateBoundingBoxEventArgs e)
         {
+            // BoundingBox für Breps erweitern
             if (_breps != null)
             {
                 foreach (var b in _breps)
                 {
-                    if (b != null) e.IncludeBoundingBox(b.GetBoundingBox(true));
+                    if (b != null) e.IncludeBoundingBox(b.GetBoundingBox(false));
                 }
             }
+
+            // BoundingBox für Kurven erweitern
             if (_curves != null)
             {
                 foreach (var c in _curves)
                 {
-                    if (c != null) e.IncludeBoundingBox(c.GetBoundingBox(true));
+                    if (c != null) e.IncludeBoundingBox(c.GetBoundingBox(false));
                 }
             }
         }
 
         protected override void PostDrawObjects(DrawEventArgs e)
         {
-            // Breps (Steine)
-            if (_breps != null)
+            // 1. Breps zeichnen (Transparent + Wires)
+            if (_breps != null && _material != null)
             {
                 foreach (var b in _breps)
                 {
                     if (b == null) continue;
 
-                    // Zeichnet schattierte Flächen (nutzt Standard-Materialeinstellungen)
-                    e.Display.DrawBrepShaded(b, _material);
+                    // Kanten zeichnen (in voller Farbe, damit man sie sieht)
+                    e.Display.DrawBrepWires(b, _color, 1);
 
-                    // Zeichnet die Kanten in der gewählten Farbe
-                    e.Display.DrawBrepWires(b, _drawColor);
+                    // Flächen transparent zeichnen
+                    e.Display.DrawBrepShaded(b, _material);
                 }
             }
 
-            // Kurven (z.B. Rondiste Vorschau)
+            // 2. Kurven zeichnen (Solid)
             if (_curves != null)
             {
                 foreach (var c in _curves)
                 {
                     if (c == null) continue;
-                    e.Display.DrawCurve(c, _drawColor, 2);
+                    e.Display.DrawCurve(c, _color, 2); // Dicke 2 für bessere Sichtbarkeit
                 }
-            }
-
-            // Punkte
-            if (_points != null)
-            {
-                foreach (var pt in _points)
-                {
-                    e.Display.DrawPoint(pt, _drawColor);
-                }
-            }
-
-            // Linien
-            if (_p1.HasValue && _p2.HasValue)
-            {
-                e.Display.DrawLine(_p1.Value, _p2.Value, _drawColor, 2);
             }
         }
     }

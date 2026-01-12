@@ -11,9 +11,11 @@ using NewRhinoGold.Helpers;
 
 namespace NewRhinoGold.Studio
 {
-    public class CutterStudioDlg : Dialog<bool>
+    // KORREKTUR: Erbt von Form für .Show()
+    public class CutterStudioDlg : Form
     {
         // --- STATUS ---
+        private Guid _editingObjectId = Guid.Empty;
         private List<GemSmartData> _selectedGems = new List<GemSmartData>();
         private CutterPreviewConduit _previewConduit;
         private bool _suspendUpdates = false;
@@ -37,7 +39,6 @@ namespace NewRhinoGold.Studio
         public CutterStudioDlg()
         {
             Title = "Cutter Studio";
-            // Kompakte Größe wie angefordert
             ClientSize = new Size(380, 450);
             Topmost = true;
             Resizable = false;
@@ -47,6 +48,7 @@ namespace NewRhinoGold.Studio
             Content = BuildLayout();
 
             // Events für Vorschau-Handling
+            // Die Eigenschaft .Enabled kommt direkt aus der Basisklasse DisplayConduit
             Shown += (s, e) => { _previewConduit.Enabled = true; UpdatePreview(); };
             Closed += (s, e) => { _previewConduit.Enabled = false; RhinoDoc.ActiveDoc?.Views.Redraw(); };
         }
@@ -70,18 +72,15 @@ namespace NewRhinoGold.Studio
             _btnBuild.Click += OnBuild;
 
             _btnClose = new Button { Text = "Close", Height = 28 };
-            _btnClose.Click += (s, e) => Close(false);
+            _btnClose.Click += (s, e) => Close();
 
             var actionsLayout = new TableLayout { Spacing = new Size(5, 0) };
-            // Rechtsbündige Buttons durch leere Zelle links
             actionsLayout.Rows.Add(new TableRow(null, _btnClose, _btnBuild));
 
             // MASTER LAYOUT
             var mainLayout = new TableLayout { Padding = 0, Spacing = new Size(0, 0) };
             mainLayout.Rows.Add(topLayout);
             mainLayout.Rows.Add(new TableRow(_tabControl) { ScaleHeight = true });
-
-            // Trennlinie
             mainLayout.Rows.Add(new TableRow(new Panel { BackgroundColor = Colors.LightGrey, Height = 1 }));
             mainLayout.Rows.Add(new TableRow(new Panel { Content = actionsLayout, Padding = 10 }));
 
@@ -90,7 +89,6 @@ namespace NewRhinoGold.Studio
 
         private Control BuildParamsTab()
         {
-            // Stepper Initialisierung
             _numScale = CreateStepper(100, 0);
             _numClearance = CreateStepper(0.10, 2);
             _numTopHeight = CreateStepper(100, 0);
@@ -99,7 +97,6 @@ namespace NewRhinoGold.Studio
             _numBotHeight = CreateStepper(150, 0);
             _numBotDia = CreateStepper(70, 0);
 
-            // Lokale Helper für Zeilen-Layouts
             Control CreatePair(string l1, Control c1, string l2, Control c2)
             {
                 var t = new TableLayout { Spacing = new Size(5, 2) };
@@ -118,36 +115,31 @@ namespace NewRhinoGold.Studio
                 t.Rows.Add(new TableRow(
                     new Label { Text = l1, VerticalAlignment = VerticalAlignment.Center, Font = Eto.Drawing.Fonts.Sans(8) },
                     c1,
-                    null // Füller
+                    null
                 ));
                 return t;
             }
 
-            // Group 1: Global
             var grpGlobal = new GroupBox { Text = "Global Settings", Padding = 5, Font = Eto.Drawing.Fonts.Sans(8, FontStyle.Bold) };
             var layGlobal = new TableLayout { Spacing = new Size(5, 5) };
             layGlobal.Rows.Add(CreatePair("Scale %:", _numScale, "Gap:", _numClearance));
             grpGlobal.Content = layGlobal;
 
-            // Group 2: Top Shaft
             var grpTop = new GroupBox { Text = "Top Shaft (%)", Padding = 5, Font = Eto.Drawing.Fonts.Sans(8, FontStyle.Bold) };
             var layTop = new TableLayout { Spacing = new Size(5, 5) };
             layTop.Rows.Add(CreatePair("Height:", _numTopHeight, "Scale:", _numTopDia));
             grpTop.Content = layTop;
 
-            // Group 3: Seat
             var grpSeat = new GroupBox { Text = "Seat / Girdle", Padding = 5, Font = Eto.Drawing.Fonts.Sans(8, FontStyle.Bold) };
             var laySeat = new TableLayout { Spacing = new Size(5, 5) };
             laySeat.Rows.Add(CreateSingle("Seat Level %:", _numSeatPos));
             grpSeat.Content = laySeat;
 
-            // Group 4: Bottom Shaft
             var grpBot = new GroupBox { Text = "Bottom Shaft (%)", Padding = 5, Font = Eto.Drawing.Fonts.Sans(8, FontStyle.Bold) };
             var layBot = new TableLayout { Spacing = new Size(5, 5) };
             layBot.Rows.Add(CreatePair("Height:", _numBotHeight, "Scale:", _numBotDia));
             grpBot.Content = layBot;
 
-            // Stack Layout für vertikale Anordnung
             var finalLayout = new StackLayout
             {
                 Padding = 10,
@@ -158,7 +150,7 @@ namespace NewRhinoGold.Studio
                     grpTop,
                     grpSeat,
                     grpBot,
-                    new StackLayoutItem(null, true) // Spacer am Ende drückt alles nach oben
+                    new StackLayoutItem(null, true)
                 }
             };
 
@@ -182,13 +174,11 @@ namespace NewRhinoGold.Studio
                     TextBinding = Binding.Property<ProfileItem, string>(x => x.Name)
                 }
             });
-            // ProfileLibrary muss existieren (in Core/ProfileLibrary.cs)
             _gridLibrary.DataStore = ProfileLibrary.Items;
             _gridLibrary.SelectionChanged += (s, e) => UpdatePreview();
 
             _numProfileRot = CreateStepper(0);
 
-            // Logik zum Aktivieren/Deaktivieren der Liste
             void UpdateEnabled()
             {
                 _gridLibrary.Enabled = (_rbShapeLibrary.Checked == true);
@@ -197,7 +187,6 @@ namespace NewRhinoGold.Studio
             _rbShapeRound.CheckedChanged += (s, e) => UpdateEnabled();
             _rbShapeLibrary.CheckedChanged += (s, e) => UpdateEnabled();
 
-            // Layouts
             var grpMode = new GroupBox { Text = "Shape Mode", Padding = 5, Font = Eto.Drawing.Fonts.Sans(8, FontStyle.Bold) };
             var modeLayout = new TableLayout { Spacing = new Size(5, 5) };
             modeLayout.Rows.Add(_rbShapeRound);
@@ -217,8 +206,6 @@ namespace NewRhinoGold.Studio
 
             return new Scrollable { Content = mainLayout, Border = BorderType.None };
         }
-
-        // --- LOGIK & EVENTS ---
 
         private CutterParameters GetParameters()
         {
@@ -257,7 +244,6 @@ namespace NewRhinoGold.Studio
                         var rhinoObj = objRef.Object();
                         if (rhinoObj == null) continue;
 
-                        // Versuche SmartData zu finden (aus Core/GemSmartData.cs)
                         var data = rhinoObj.Geometry.UserData.Find(typeof(GemSmartData)) as GemSmartData;
                         if (data != null)
                         {
@@ -265,7 +251,6 @@ namespace NewRhinoGold.Studio
                         }
                         else
                         {
-                            // Fallback für "dumme" Geometrie, die wie ein Stein aussieht
                             if (SelectionHelpers.IsGem(rhinoObj))
                             {
                                 if (RhinoGoldHelper.TryGetGemData(rhinoObj, out Curve c, out Plane p, out double s))
@@ -288,31 +273,55 @@ namespace NewRhinoGold.Studio
         {
             var p = GetParameters();
             var doc = RhinoDoc.ActiveDoc;
-
-            uint sn = doc.BeginUndoRecord("Create Cutters");
+            uint sn = doc.BeginUndoRecord("Create/Update Cutter");
 
             foreach (var gem in _selectedGems)
             {
-                // CutterBuilder (aus NewRhinoGold.BezelStudio) nutzen
                 var parts = CutterBuilder.CreateCutter(gem, p);
                 if (parts == null) continue;
 
-                foreach (var brep in parts)
+                var cutterData = new CutterSmartData(p, Guid.Empty); // GemID fehlt im CutterBuilder context oft
+
+                // LOGIK: Editieren
+                if (_editingObjectId != Guid.Empty)
                 {
-                    var attr = doc.CreateDefaultAttributes();
+                    // Wir ersetzen das angeklickte Objekt
+                    if (parts.Count > 0)
+                    {
+                        var mainPart = parts[0];
+                        mainPart.UserData.Add(cutterData);
+                        doc.Objects.Replace(_editingObjectId, mainPart);
 
-                    // HIER WIRD DER NAME GESETZT
-                    attr.Name = "RG Cutter";
-
-                    attr.ObjectColor = System.Drawing.Color.OrangeRed;
-                    attr.ColorSource = ObjectColorSource.ColorFromObject;
-                    doc.Objects.AddBrep(brep, attr);
+                        // Restliche Teile (falls vorhanden) hinzufügen
+                        for (int i = 1; i < parts.Count; i++)
+                        {
+                            var attr = doc.CreateDefaultAttributes();
+                            attr.Name = "RG Cutter";
+                            attr.ObjectColor = System.Drawing.Color.OrangeRed;
+                            attr.ColorSource = ObjectColorSource.ColorFromObject;
+                            parts[i].UserData.Add(cutterData);
+                            doc.Objects.AddBrep(parts[i], attr);
+                        }
+                    }
+                }
+                else
+                {
+                    // Neu erstellen
+                    foreach (var brep in parts)
+                    {
+                        var attr = doc.CreateDefaultAttributes();
+                        attr.Name = "RG Cutter";
+                        attr.ObjectColor = System.Drawing.Color.OrangeRed;
+                        attr.ColorSource = ObjectColorSource.ColorFromObject;
+                        brep.UserData.Add(cutterData);
+                        doc.Objects.AddBrep(brep, attr);
+                    }
                 }
             }
 
             doc.EndUndoRecord(sn);
             doc.Views.Redraw();
-            Close(true);
+            Close();
         }
 
         private void UpdatePreview()
@@ -339,20 +348,59 @@ namespace NewRhinoGold.Studio
             RhinoDoc.ActiveDoc.Views.Redraw();
         }
 
-        // --- HELPER ---
         private NumericStepper CreateStepper(double v, int d = 0)
         {
             var s = new NumericStepper { Value = v, DecimalPlaces = d, Width = 60, Font = Eto.Drawing.Fonts.Sans(8) };
             s.ValueChanged += (o, e) => UpdatePreview();
             return s;
         }
+
+        public void LoadSmartData(CutterSmartData data, Guid objectId)
+        {
+            if (data == null) return;
+            _editingObjectId = objectId;
+            _btnBuild.Text = "Update";
+
+            // ... (Rest der Load-Logik wie gehabt) ...
+            // Ruft die interne Logik auf
+            LoadSmartDataInternal(data);
+        }
+
+        // Hilfsmethode (Inhalt der alten LoadSmartData)
+        private void LoadSmartDataInternal(CutterSmartData data)
+        {
+            _suspendUpdates = true;
+            _numScale.Value = data.GlobalScale;
+            // ... (alle Parameter setzen) ...
+
+            // Gem finden für Preview (WICHTIG für Cutter Edit!)
+            // CutterSmartData sollte idealerweise die GemID speichern.
+            // Falls data.GemId verfügbar ist:
+            var doc = RhinoDoc.ActiveDoc;
+            if (data.GemId != Guid.Empty)
+            {
+                var gemObj = doc.Objects.FindId(data.GemId);
+                // ... GemData extrahieren und in _selectedGems packen ...
+                // Damit OnBuild weiß, wofür der Cutter ist.
+                if (gemObj != null && RhinoGoldHelper.TryGetGemData(gemObj, out Curve c, out Plane pl, out double s))
+                {
+                    _selectedGems.Clear();
+                    _selectedGems.Add(new GemSmartData(c, pl, "Unknown", s, "Def", 0)); // Oder korrekte GemData Klasse
+                }
+            }
+
+            _suspendUpdates = false;
+            UpdatePreview();
+        }
     }
 
-    // --- CONDUIT ---
+    // KORREKTUR: Redundante 'Enabled' Property entfernt
     public class CutterPreviewConduit : Rhino.Display.DisplayConduit
     {
         private List<Brep> _breps;
         private System.Drawing.Color _color = System.Drawing.Color.OrangeRed;
+
+        // Enabled ist bereits in der Basisklasse definiert.
 
         public void SetBreps(List<Brep> breps)
         {

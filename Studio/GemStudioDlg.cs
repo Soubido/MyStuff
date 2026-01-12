@@ -12,13 +12,16 @@ using NewRhinoGold.Core;
 namespace NewRhinoGold.Studio
 {
     // FINAL VERSION - DYNAMIC LAYOUT ENGINE
-    // Solves: Cut-off buttons, Alignment issues, Input scaling.
     public class GemStudioDlg : Form
     {
+        // --- Edit State ---
+        // Hier merken wir uns das Objekt, das wir bearbeiten
+        private Guid _editingObjectId = Guid.Empty;
+        private Plane _restoredPlane = Plane.Unset;
+
         // --- UI State ---
         private ComboBox _comboShape;
         private ComboBox _comboMaterial;
-
         private NumericStepper _numSize;
         private NumericStepper _numLength;
 
@@ -40,7 +43,7 @@ namespace NewRhinoGold.Studio
         private Button _btnStartPlacement;
         private Button _btnClose;
 
-        // --- Logic State (UNTOUCHED) ---
+        // --- Logic State ---
         private System.Drawing.Color _currentColor = System.Drawing.Color.Blue;
 
         public static GemStudioDlg Instance { get; private set; }
@@ -48,16 +51,13 @@ namespace NewRhinoGold.Studio
         public GemStudioDlg()
         {
             Instance = this;
-
             Title = "Gem Studio";
-            // KORREKTUR: Breite auf 400 erhöht, um "Abschneiden" physikalisch unmöglich zu machen.
             ClientSize = new Size(250, 380);
             Topmost = true;
             Resizable = false;
             Padding = new Padding(10);
 
             Content = BuildLayout();
-
             UpdateWeightLabel();
 
             Closed += (s, e) => { Instance = null; };
@@ -67,29 +67,23 @@ namespace NewRhinoGold.Studio
         {
             InitializeControls();
 
-            // STRATEGIEWECHSEL: DynamicLayout
-            // Das ist der mächtigste Layout-Container in Eto.
-            // Er richtet Labels (Spalte 1) und Inputs (Spalte 2) automatisch perfekt aus.
             var layout = new DynamicLayout
             {
-                Padding = Padding.Empty, // Padding kommt vom Form
-                Spacing = new Size(5, 5) // Sauberer Abstand
+                Padding = Padding.Empty,
+                Spacing = new Size(5, 5)
             };
 
-            layout.BeginVertical(); // Start Hauptfluss
+            layout.BeginVertical();
 
             // --- SECTION 1: BASIC INFO ---
-            // AddRow(Label, Control) erstellt automatisch 2 Spalten
             layout.AddRow(CreateLabel("Shape:"), _comboShape);
             layout.AddRow(CreateLabel("Material:"), _comboMaterial);
-
-            layout.AddRow(null); // Kleiner visueller Abstand
+            layout.AddRow(null);
 
             // --- SECTION 2: DIMENSIONS ---
             layout.AddRow(CreateHeader("Dimensions (mm)"));
             layout.AddRow(CreateLabel("Width:"), _numSize);
             layout.AddRow(CreateLabel("Length:"), _numLength);
-
             layout.AddRow(null);
 
             // --- SECTION 3: PROPORTIONS ---
@@ -98,52 +92,33 @@ namespace NewRhinoGold.Studio
             layout.AddRow(CreateLabel("Crown:"), _numCrownMM);
             layout.AddRow(CreateLabel("Girdle:"), _numGirdleMM);
             layout.AddRow(CreateLabel("Pavilion:"), _numPavilionMM);
-
             layout.AddRow(null);
 
             // --- SECTION 4: PLACEMENT SETTINGS ---
             layout.AddRow(CreateLabel("Gap:"), _numGap);
             layout.AddRow(CreateLabel("Weight:"), _lblWeight);
-
             layout.AddRow(null);
 
-            // --- SECTION 5: MODE (Vertical) ---
-            // Wir fügen das StackLayout als einzelne Zeile hinzu. 
-            // Es spannt sich automatisch über die volle Breite.
+            // --- SECTION 5: MODE ---
             var modeStack = new StackLayout
             {
                 Orientation = Orientation.Vertical,
                 Spacing = 5,
                 Items = { _rbPlacePoint, _rbPlaceSurface, _chkFlip, _rbPlaceDummy }
             };
-
-            // "Mode:" Label links, StackLayout rechts? Nein, wir machen eine eigene Zeile für Mode.
-            // Layout: 
-            // Label "Mode:"
-            // [Radio Buttons]
             layout.AddRow(CreateLabel("Mode:"), modeStack);
 
-            // Spacer nach unten (Schiebt Buttons an den Rand, aber sanft)
             layout.Add(new Panel { Height = 10 });
-            layout.Add(null); // Flexibler Spacer
+            layout.Add(null);
 
-            // --- SECTION 6: FOOTER (Buttons) ---
-            // Wir erstellen ein TableLayout für die Buttons, damit sie exakt 50/50 sind.
-            // Und wir fügen dieses TableLayout als EINE Zeile in das DynamicLayout ein.
+            // --- SECTION 6: FOOTER ---
             var buttonGrid = new TableLayout
             {
                 Spacing = new Size(10, 0),
-                Rows =
-                {
-                    new TableRow(
-                        new TableCell(_btnStartPlacement, true), // 50% Scale
-                        new TableCell(_btnClose, true)           // 50% Scale
-                    )
-                }
+                Rows = { new TableRow(new TableCell(_btnStartPlacement, true), new TableCell(_btnClose, true)) }
             };
 
-            layout.AddRow(buttonGrid); // Fügt die Buttons über die volle Breite ein
-
+            layout.AddRow(buttonGrid);
             layout.EndVertical();
 
             return layout;
@@ -172,7 +147,7 @@ namespace NewRhinoGold.Studio
             _numPavilionMM = CreateStepper(43, 0);
             _numGap = CreateStepper(0.0, 2);
 
-            // Labels - SAFE: Eto.Drawing.Fonts
+            // Labels
             _lblWeight = new Label { Text = "0.00 ct", VerticalAlignment = VerticalAlignment.Center, Font = Eto.Drawing.Fonts.Sans(10, FontStyle.Bold) };
 
             // Radios
@@ -192,19 +167,10 @@ namespace NewRhinoGold.Studio
             _btnClose.Click += (s, e) => Close();
         }
 
-        // --- Layout Helpers ---
-        // Helper für DynamicLayout Labels
-        private Label CreateLabel(string text)
-        {
-            return new Label { Text = text, VerticalAlignment = VerticalAlignment.Center };
-        }
+        private Label CreateLabel(string text) => new Label { Text = text, VerticalAlignment = VerticalAlignment.Center };
+        private Label CreateHeader(string text) => new Label { Text = text, Font = Eto.Drawing.Fonts.Sans(8, FontStyle.Bold), TextColor = Colors.Gray };
 
-        private Label CreateHeader(string text)
-        {
-            return new Label { Text = text, Font = Eto.Drawing.Fonts.Sans(8, FontStyle.Bold), TextColor = Colors.Gray };
-        }
-
-        // --- LOGIC (EXACT COPY - DO NOT TOUCH) ---
+        // --- LOGIC ---
         private void OnStartPlacement(object sender, EventArgs e)
         {
             this.Visible = false;
@@ -229,7 +195,14 @@ namespace NewRhinoGold.Studio
 
             try
             {
-                if (_rbPlaceDummy.Checked == true)
+                // KORREKTUR: Wenn wir im Edit-Modus sind, nutzen wir die gespeicherte Position
+                if (_editingObjectId != Guid.Empty && _restoredPlane.IsValid)
+                {
+                    // Wir bauen den Stein an der Originalposition neu (kein Placement Tool)
+                    var xform = Transform.PlaneToPlane(Plane.WorldXY, _restoredPlane);
+                    BakeGem(tempGem, baseCurve, xform, shapeType, width);
+                }
+                else if (_rbPlaceDummy.Checked == true)
                 {
                     BakeGem(tempGem, baseCurve, Transform.Identity, shapeType, width);
                 }
@@ -251,38 +224,29 @@ namespace NewRhinoGold.Studio
         private void RunInteractivePlacement(Brep templateGem, Curve templateCurve, GemShapes.ShapeType shape, double size)
         {
             Brep targetBrep = null;
-
             if (_rbPlaceSurface.Checked == true)
             {
                 var go = new Rhino.Input.Custom.GetObject();
                 go.SetCommandPrompt("Select Surface");
                 go.GeometryFilter = ObjectType.Surface | ObjectType.PolysrfFilter;
                 go.Get();
-
                 if (go.CommandResult() == Rhino.Commands.Result.Success)
                 {
                     var obj = go.Object(0);
                     targetBrep = obj.Brep();
-                    if (targetBrep == null && obj.Surface() != null)
-                        targetBrep = obj.Surface().ToBrep();
+                    if (targetBrep == null && obj.Surface() != null) targetBrep = obj.Surface().ToBrep();
                 }
-                else
-                {
-                    return;
-                }
+                else return;
             }
 
             var toolPos = new GemPlacementTool(templateGem, templateCurve, _currentColor, targetBrep, _numGap.Value);
             toolPos.Get();
-
             if (toolPos.CommandResult() != Rhino.Commands.Result.Success) return;
 
             Transform posXform = toolPos.FinalTransform;
-
             if (_rbPlaceSurface.Checked == true && _chkFlip.Checked == true)
             {
-                Plane tempPlane = Plane.WorldXY;
-                tempPlane.Transform(posXform);
+                Plane tempPlane = Plane.WorldXY; tempPlane.Transform(posXform);
                 Transform flip = Transform.Rotation(Math.PI, tempPlane.XAxis, tempPlane.Origin);
                 posXform = flip * posXform;
             }
@@ -294,11 +258,7 @@ namespace NewRhinoGold.Studio
             {
                 var toolRot = new GemRotationTool(templateGem, posXform, _currentColor);
                 toolRot.Get();
-
-                if (toolRot.CommandResult() == Rhino.Commands.Result.Success)
-                {
-                    finalXform = toolRot.FinalTransform;
-                }
+                if (toolRot.CommandResult() == Rhino.Commands.Result.Success) finalXform = toolRot.FinalTransform;
             }
 
             BakeGem(templateGem, templateCurve, finalXform, shape, size);
@@ -331,20 +291,39 @@ namespace NewRhinoGold.Studio
 
             double weight = 0.0;
             var mp = VolumeMassProperties.Compute(finalGem);
-            if (mp != null)
-                weight = Math.Abs(mp.Volume) * (Densities.GetDensity(matName) / 1000.0) * 5.0;
+            if (mp != null) weight = Math.Abs(mp.Volume) * (Densities.GetDensity(matName) / 1000.0) * 5.0;
 
-            var smartData = new GemSmartData(
-                finalCurve,
-                finalPlane,
-                shape.ToString(),
-                size,
-                matName,
-                weight
-            );
-
+            var smartData = new GemSmartData(finalCurve, finalPlane, shape.ToString(), size, matName, weight);
             finalGem.UserData.Add(smartData);
-            doc.Objects.AddBrep(finalGem, attr);
+
+            // KORREKTUR: REPLACE statt ADD, wenn wir editieren
+            if (_editingObjectId != Guid.Empty)
+            {
+                // Ersetzt die Geometrie des existierenden Objekts
+                doc.Objects.Replace(_editingObjectId, finalGem);
+
+                // Attribute (Farbe etc.) auch aktualisieren
+                var existingObj = doc.Objects.FindId(_editingObjectId);
+                if (existingObj != null)
+                {
+                    existingObj.Attributes.ObjectColor = attr.ObjectColor;
+                    existingObj.Attributes.ColorSource = attr.ColorSource;
+                    existingObj.CommitChanges();
+                }
+
+                RhinoApp.WriteLine("Gem updated.");
+
+                // Edit Modus beenden oder beibehalten? 
+                // Wir resetten hier, damit der User danach wieder neue Steine setzen kann, wenn er will.
+                _editingObjectId = Guid.Empty;
+                _restoredPlane = Plane.Unset;
+                _btnStartPlacement.Text = "Place Gem";
+            }
+            else
+            {
+                doc.Objects.AddBrep(finalGem, attr);
+                RhinoApp.WriteLine("Gem created.");
+            }
 
             doc.EndUndoRecord(sn);
             doc.Views.Redraw();
@@ -368,6 +347,40 @@ namespace NewRhinoGold.Studio
             var s = new NumericStepper { Value = val, DecimalPlaces = dec };
             s.ValueChanged += (sender, e) => UpdateWeightLabel();
             return s;
+        }
+
+        // --- EDIT FUNCTIONALITY ---
+        // WICHTIG: Nimmt jetzt auch die ID entgegen!
+        public void LoadSmartData(GemSmartData data, Guid objectId)
+        {
+            if (data == null) return;
+
+            // Edit-Modus aktivieren
+            _editingObjectId = objectId;
+            _restoredPlane = data.GemPlane;
+            _btnStartPlacement.Text = "Update Gem"; // Button Text ändern
+
+            // UI Werte setzen
+            for (int i = 0; i < _comboShape.Items.Count; i++)
+            {
+                if (string.Equals(_comboShape.Items[i].Text, data.CutType, StringComparison.OrdinalIgnoreCase))
+                {
+                    _comboShape.SelectedIndex = i;
+                    break;
+                }
+            }
+
+            for (int i = 0; i < _comboMaterial.Items.Count; i++)
+            {
+                if (string.Equals(_comboMaterial.Items[i].Text, data.MaterialName, StringComparison.OrdinalIgnoreCase))
+                {
+                    _comboMaterial.SelectedIndex = i;
+                    break;
+                }
+            }
+
+            _numSize.Value = data.GemSize;
+            UpdateWeightLabel();
         }
     }
 }

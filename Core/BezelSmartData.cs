@@ -12,21 +12,23 @@ namespace NewRhinoGold.Core
         private const int MAJOR_VERSION = 1;
         private const int MINOR_VERSION = 0;
 
+        // Eigenschaften an Dialog angepasst (Thickness -> ThicknessTop, ParentGemId -> GemId, etc.)
         public double Height { get; set; }
-        public double Thickness { get; set; }
+        public double ThicknessTop { get; set; }
         public double Offset { get; set; }
-        public Guid ParentGemId { get; set; }
-        public Plane BasePlane { get; set; }
+        public Guid GemId { get; set; }
+        public Plane GemPlane { get; set; }
 
         public BezelSmartData() { }
 
-        public BezelSmartData(double height, double thickness, double offset, Guid parentGemId, Plane basePlane)
+        // Konstruktor passend zum Aufruf in BezelStudioDlg
+        public BezelSmartData(double height, double thicknessTop, double offset, Guid gemId, Plane gemPlane)
         {
             Height = height;
-            Thickness = thickness;
+            ThicknessTop = thicknessTop;
             Offset = offset;
-            ParentGemId = parentGemId;
-            BasePlane = basePlane;
+            GemId = gemId;
+            GemPlane = gemPlane;
         }
 
         public override string Description => "NewRhinoGold Smart Bezel Data";
@@ -35,14 +37,13 @@ namespace NewRhinoGold.Core
         {
             base.OnTransform(xform);
 
-            if (BasePlane.IsValid)
+            if (GemPlane.IsValid)
             {
-                var p = BasePlane;
+                var p = GemPlane;
                 p.Transform(xform);
-                BasePlane = p;
+                GemPlane = p;
             }
 
-            // Fix CS1061: Skalierungsfaktor berechnen
             double scale = 1.0;
             if (Math.Abs(xform.Determinant) > 1e-6)
             {
@@ -52,7 +53,7 @@ namespace NewRhinoGold.Core
             if (Math.Abs(scale - 1.0) > Rhino.RhinoMath.ZeroTolerance)
             {
                 Height *= scale;
-                Thickness *= scale;
+                ThicknessTop *= scale;
                 Offset *= scale;
             }
         }
@@ -61,10 +62,10 @@ namespace NewRhinoGold.Core
         {
             archive.Read3dmChunkVersion(out int major, out int minor);
             Height = archive.ReadDouble();
-            Thickness = archive.ReadDouble();
+            ThicknessTop = archive.ReadDouble();
             Offset = archive.ReadDouble();
-            ParentGemId = archive.ReadGuid();
-            BasePlane = archive.ReadPlane();
+            GemId = archive.ReadGuid();
+            GemPlane = archive.ReadPlane();
             return true;
         }
 
@@ -72,10 +73,10 @@ namespace NewRhinoGold.Core
         {
             archive.Write3dmChunkVersion(MAJOR_VERSION, MINOR_VERSION);
             archive.WriteDouble(Height);
-            archive.WriteDouble(Thickness);
+            archive.WriteDouble(ThicknessTop);
             archive.WriteDouble(Offset);
-            archive.WriteGuid(ParentGemId);
-            archive.WritePlane(BasePlane);
+            archive.WriteGuid(GemId);
+            archive.WritePlane(GemPlane);
             return true;
         }
     }

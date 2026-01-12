@@ -53,6 +53,11 @@ namespace NewRhinoGold.Dialog
             layout.Add(CreateCmdBtn("Pave Studio", "_PaveStudio"));
             layout.Add(null);
 
+            // --- EDIT ---
+            layout.Add(CreateHeader("Edit"));
+            layout.Add(CreateCmdBtn("Edit Smart Object", "_EditSmartObject")); // Neuer Befehl
+            layout.Add(null);
+
             // --- TOOLS ---
             layout.Add(CreateHeader("Tools"));
             layout.Add(CreateCmdBtn("Extract Curve", "_ExtractGemCurve"));
