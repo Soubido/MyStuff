@@ -62,6 +62,7 @@ namespace NewRhinoGold.Dialog
             layout.Add(CreateHeader("Tools"));
             layout.Add(CreateCmdBtn("Extract Curve", "_ExtractGemCurve"));
             layout.Add(CreateCmdBtn("Move on Srf", "_MoveOnSurface"));
+            layout.Add(CreateCmdBtn("Engraving Builder", "_EngraveRing"));
             layout.Add(null);
 
             // --- ANALYSIS ---

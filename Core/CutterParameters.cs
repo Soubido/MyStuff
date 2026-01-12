@@ -14,14 +14,17 @@ namespace NewRhinoGold.Core
 
         // --- SEAT (Auflage) ---
         public double SeatLevel { get; set; } = 20.0;    // % Position (wo der Seat endet)
-        
+
         // --- BOTTOM PART (Schaft unten) ---
         public double BottomHeight { get; set; } = 150.0; // % Länge nach unten
         public double BottomDiameterScale { get; set; } = 70.0; // % Verjüngung unten
 
         // --- SHAPE (Reiter 2) ---
         public bool UseCustomProfile { get; set; } = false;
-        public Guid ProfileId { get; set; } = Guid.Empty; // ID aus ProfileLibrary
+
+        // CHANGE: String statt Guid für den Dateinamen (aus Curves Ordner)
+        public string ProfileName { get; set; } = "Round";
+
         public double ProfileRotation { get; set; } = 0.0;
     }
 }

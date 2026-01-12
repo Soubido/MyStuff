@@ -59,6 +59,7 @@ namespace NewRhinoGold.Helpers
                 AddHeader(rootMenu, "Tools");
                 AddItem(rootMenu, "Extract Curve", "_ExtractGemCurve");
                 AddItem(rootMenu, "Move on Surface", "_MoveOnSurface");
+                AddItem(rootMenu, "Engraving Builder", "_EngraveRing");
                 rootMenu.Items.Add(new SeparatorMenuItem());
 
                 // Analysis

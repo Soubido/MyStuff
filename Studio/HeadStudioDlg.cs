@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq; // Wichtig für LINQ Operationen
 using Eto.Drawing;
 using Eto.Forms;
 using Rhino;
@@ -8,8 +9,8 @@ using Rhino.Geometry;
 using Rhino.Input.Custom;
 using Rhino.UI;
 using NewRhinoGold.Core;
-using NewRhinoGold.BezelStudio;
 using NewRhinoGold.Helpers;
+using NewRhinoGold.BezelStudio; // WICHTIG: Hier liegt der HeadBuilder
 
 namespace NewRhinoGold.Studio
 {
@@ -17,35 +18,33 @@ namespace NewRhinoGold.Studio
     {
         private readonly GemDisplayCond _previewConduit;
         private Guid _editingObjectId = Guid.Empty;
-        // Fix CS0246: Expliziter Namespace
         private List<NewRhinoGold.Helpers.GemData> _selectedGems = new List<NewRhinoGold.Helpers.GemData>();
 
-        // --- Styles ---
+        // Styles
         private readonly Eto.Drawing.Font _fontStandard = Eto.Drawing.Fonts.Sans(10);
         private readonly Eto.Drawing.Font _fontInput = Eto.Drawing.Fonts.Sans(11);
         private readonly Eto.Drawing.Font _fontHeader = Eto.Drawing.Fonts.Sans(12, FontStyle.Bold);
         private readonly Eto.Drawing.Font _fontLabelBold = Eto.Drawing.Fonts.Sans(10, FontStyle.Bold);
 
-        // --- UI Controls ---
+        // UI Controls
         private Button _btnSelectGem;
         private TabControl _tabControl;
         private Button _btnBuild;
         private Button _btnClose;
 
-        // 1. General Tab Controls
-        private NumericStepper _numGemInside;
-        private NumericStepper _numProngCount;
+        // General
+        private NumericStepper _numGemInside, _numProngCount;
         private CheckBox _chkLockDia;
         private NumericStepper _numTopDia, _numMidDia, _numBotDia;
         private NumericStepper _numTopOff, _numMidOff, _numBotOff;
         private NumericStepper _numDepthBelow, _numHeight;
 
-        // 2. Profile Tab Controls
+        // Profile
         private GridView _gridProfiles;
         private Button _btnAddProfile;
         private NumericStepper _numTopRot, _numMidRot, _numBotRot;
 
-        // 3. Rails Tab Controls
+        // Rails
         private CheckBox _chkTopRail;
         private DropDown _drpTopProfile;
         private NumericStepper _numTopRailWidth, _numTopRailHeight, _numTopRailPos, _numTopRailOffset, _numTopRailRot;
@@ -54,35 +53,29 @@ namespace NewRhinoGold.Studio
         private DropDown _drpBotProfile;
         private NumericStepper _numBotRailWidth, _numBotRailHeight, _numBotRailPos, _numBotRailOffset, _numBotRailRot;
 
-        // 4. Sort Tab Controls
+        // Sort
         private CheckBox _chkMoveAll;
         private Scrollable _scrollSort;
         private StackLayout _sortLayout;
         private List<Slider> _prongSliders = new List<Slider>();
         private List<double> _currentProngPositions = new List<double>();
 
-        // Logic State
         private bool _suspendUpdates = true;
 
         public HeadStudioDlg()
         {
             _suspendUpdates = true;
-
             Title = "Head Studio";
             ClientSize = new Size(360, 500);
             Topmost = true;
             Resizable = false;
-
             _previewConduit = new GemDisplayCond();
 
             Content = BuildMainLayout();
 
             Shown += (s, e) => {
                 _previewConduit.Enable();
-                if (_numProngCount != null)
-                {
-                    RebuildSortList((int)_numProngCount.Value);
-                }
+                if (_numProngCount != null) RebuildSortList((int)_numProngCount.Value);
                 _suspendUpdates = false;
                 UpdatePreview();
             };
@@ -111,7 +104,6 @@ namespace NewRhinoGold.Studio
             _btnClose.Click += (s, e) => Close();
 
             var layout = new DynamicLayout { Padding = new Padding(10), Spacing = new Size(5, 5) };
-
             layout.BeginVertical();
             layout.AddRow(_btnSelectGem);
             layout.AddRow(null);
@@ -125,7 +117,6 @@ namespace NewRhinoGold.Studio
             };
             layout.AddRow(footer);
             layout.EndVertical();
-
             return layout;
         }
 
@@ -136,13 +127,9 @@ namespace NewRhinoGold.Studio
                 if (!_suspendUpdates) RebuildSortList((int)_numProngCount.Value);
                 UpdatePreview();
             };
-
             _numGemInside = CreateStepper(30, 0, 1.0);
-
-            _numTopDia = CreateStepper(1.0);
-            _numMidDia = CreateStepper(1.0);
-            _numBotDia = CreateStepper(1.0);
-            _chkLockDia = new CheckBox { Text = "Lock", Checked = true, ToolTip = "Synchronize Diameters", Font = _fontStandard };
+            _numTopDia = CreateStepper(1.0); _numMidDia = CreateStepper(1.0); _numBotDia = CreateStepper(1.0);
+            _chkLockDia = new CheckBox { Text = "Lock", Checked = true, ToolTip = "Synchronize", Font = _fontStandard };
 
             void SyncDia(double val)
             {
@@ -159,16 +146,11 @@ namespace NewRhinoGold.Studio
             _numMidDia.ValueChanged += (s, e) => SyncDia(_numMidDia.Value);
             _numBotDia.ValueChanged += (s, e) => SyncDia(_numBotDia.Value);
 
-            _numTopOff = CreateStepper(0.0);
-            _numMidOff = CreateStepper(0.0);
-            _numBotOff = CreateStepper(0.0);
-
-            _numDepthBelow = CreateStepper(2.0);
-            _numHeight = CreateStepper(5.0);
+            _numTopOff = CreateStepper(0.0); _numMidOff = CreateStepper(0.0); _numBotOff = CreateStepper(0.0);
+            _numDepthBelow = CreateStepper(2.0); _numHeight = CreateStepper(5.0);
 
             var layout = new DynamicLayout { Padding = 10, Spacing = new Size(5, 8) };
             layout.BeginVertical();
-
             layout.AddRow(CreateLabel("Prong Count:"), _numProngCount);
             layout.AddRow(CreateLabel("Gem Inside (%):"), _numGemInside);
             layout.AddRow(null);
@@ -176,36 +158,19 @@ namespace NewRhinoGold.Studio
             var gridHeader = new TableLayout
             {
                 Spacing = new Size(5, 0),
-                Rows = { new TableRow(
-                    new Label { Text = "Level", Font = _fontLabelBold, Width = 40 },
-                    new Label { Text = "Diameter", Font = _fontLabelBold },
-                    _chkLockDia,
-                    new Label { Text = "Shift", Font = _fontLabelBold }
-                )}
+                Rows = { new TableRow(new Label { Text = "Level", Font = _fontLabelBold, Width = 40 }, new Label { Text = "Diameter", Font = _fontLabelBold }, _chkLockDia, new Label { Text = "Shift", Font = _fontLabelBold }) }
             };
             layout.AddRow(gridHeader);
-
-            TableRow CreateGridRow(string label, Control dia, Control off)
-            {
-                return new TableRow(
-                    new TableCell(new Label { Text = label, VerticalAlignment = VerticalAlignment.Center, Font = _fontStandard }, false),
-                    new TableCell(dia, true),
-                    new TableCell(new Panel { Width = 10 }, false),
-                    new TableCell(off, true)
-                );
-            }
-
+            TableRow CreateGridRow(string label, Control dia, Control off) => new TableRow(new TableCell(new Label { Text = label, VerticalAlignment = VerticalAlignment.Center, Font = _fontStandard }, false), new TableCell(dia, true), new TableCell(new Panel { Width = 10 }, false), new TableCell(off, true));
             var grid = new TableLayout { Spacing = new Size(5, 5) };
             grid.Rows.Add(CreateGridRow("Top:", _numTopDia, _numTopOff));
             grid.Rows.Add(CreateGridRow("Mid:", _numMidDia, _numMidOff));
             grid.Rows.Add(CreateGridRow("Bot:", _numBotDia, _numBotOff));
             layout.AddRow(grid);
-
             layout.AddRow(null);
             layout.AddRow(CreateHeader("Dimensions"));
             layout.AddRow(CreateLabel("Depth below Gem:"), _numDepthBelow);
             layout.AddRow(CreateLabel("Total Height:"), _numHeight);
-
             layout.EndVertical();
             return new Scrollable { Content = layout, Border = BorderType.None };
         }
@@ -216,16 +181,21 @@ namespace NewRhinoGold.Studio
             _gridProfiles.Columns.Add(new GridColumn
             {
                 HeaderText = "Profile",
+                Width = 200,
                 DataCell = new ImageTextCell
                 {
-                    ImageBinding = Binding.Property<ProfileItem, Image>(x => x.Preview),
-                    TextBinding = Binding.Property<ProfileItem, string>(x => x.Name)
-                },
-                Width = 200
+                    ImageBinding = Binding.Property<HeadProfileItem, Image>(x => x.Preview),
+                    TextBinding = Binding.Property<HeadProfileItem, string>(x => x.Name)
+                }
             });
-            _gridProfiles.DataStore = ProfileLibrary.Items;
+
+            // Laden aus Library
+            _gridProfiles.DataStore = HeadProfileLibrary.GetProfileItems();
             _gridProfiles.SelectionChanged += (s, e) => UpdatePreview();
-            if (ProfileLibrary.Items.Count > 0) _gridProfiles.SelectRow(0);
+
+            // Korrigiert: Cast statt AsList()
+            var list = (List<HeadProfileItem>)_gridProfiles.DataStore;
+            if (list != null && list.Count > 0) _gridProfiles.SelectRow(0);
 
             _btnAddProfile = new Button { Text = "Add Custom Curve", Font = _fontStandard };
             _btnAddProfile.Click += OnAddProfileFromRhino;
@@ -253,54 +223,32 @@ namespace NewRhinoGold.Studio
             void FillDrp(DropDown d)
             {
                 d.Items.Clear();
-                foreach (var i in ProfileLibrary.Items) d.Items.Add(new ListItem { Text = i.Name, Key = i.Id.ToString() });
+                foreach (var name in HeadProfileLibrary.GetProfileNames())
+                    d.Items.Add(new ListItem { Text = name, Key = name });
                 if (d.Items.Count > 0) d.SelectedIndex = 0;
             }
 
-            _chkTopRail = new CheckBox { Text = "Enable Top Rail", Checked = true, Font = _fontStandard };
-            _chkTopRail.CheckedChanged += (s, e) => UpdatePreview();
-            _drpTopProfile = new DropDown { Font = _fontStandard }; FillDrp(_drpTopProfile);
-            _drpTopProfile.SelectedValueChanged += (s, e) => UpdatePreview();
-
-            _numTopRailWidth = CreateStepper(0.8); _numTopRailHeight = CreateStepper(0.8);
-            _numTopRailPos = CreateStepper(-0.5); _numTopRailOffset = CreateStepper(0.0);
-            _numTopRailRot = CreateStepper(0, 0, 5);
+            _chkTopRail = new CheckBox { Text = "Enable Top Rail", Checked = true, Font = _fontStandard }; _chkTopRail.CheckedChanged += (s, e) => UpdatePreview();
+            _drpTopProfile = new DropDown { Font = _fontStandard }; FillDrp(_drpTopProfile); _drpTopProfile.SelectedValueChanged += (s, e) => UpdatePreview();
+            _numTopRailWidth = CreateStepper(0.8); _numTopRailHeight = CreateStepper(0.8); _numTopRailPos = CreateStepper(-0.5); _numTopRailOffset = CreateStepper(0.0); _numTopRailRot = CreateStepper(0, 0, 5);
 
             Control BuildRailGroup(string title, CheckBox enable, DropDown prof, NumericStepper w, NumericStepper h, NumericStepper z, NumericStepper off, NumericStepper rot)
             {
                 var gl = new DynamicLayout { Padding = 5, Spacing = new Size(5, 5) };
-                gl.BeginVertical();
-                gl.AddRow(enable);
-                gl.AddRow(CreateLabel("Profile:"), prof);
+                gl.BeginVertical(); gl.AddRow(enable); gl.AddRow(CreateLabel("Profile:"), prof);
                 var sizeRow = new TableLayout { Spacing = new Size(5, 0), Rows = { new TableRow(w, new Label { Text = "x", VerticalAlignment = VerticalAlignment.Center }, h) } };
-                gl.AddRow(CreateLabel("Size (WxH):"), sizeRow);
-                gl.AddRow(CreateLabel("Z-Pos:"), z);
-                gl.AddRow(CreateLabel("Offset:"), off);
-                gl.AddRow(CreateLabel("Rotation:"), rot);
-                gl.EndVertical();
-                return new GroupBox { Text = title, Content = gl, Font = _fontStandard };
+                gl.AddRow(CreateLabel("Size (WxH):"), sizeRow); gl.AddRow(CreateLabel("Z-Pos:"), z); gl.AddRow(CreateLabel("Offset:"), off); gl.AddRow(CreateLabel("Rotation:"), rot);
+                gl.EndVertical(); return new GroupBox { Text = title, Content = gl, Font = _fontStandard };
             }
-
             var topGroup = BuildRailGroup("Top Rail", _chkTopRail, _drpTopProfile, _numTopRailWidth, _numTopRailHeight, _numTopRailPos, _numTopRailOffset, _numTopRailRot);
 
-            _chkBotRail = new CheckBox { Text = "Enable Bottom Rail", Checked = true, Font = _fontStandard };
-            _chkBotRail.CheckedChanged += (s, e) => UpdatePreview();
-            _drpBotProfile = new DropDown { Font = _fontStandard }; FillDrp(_drpBotProfile);
-            _drpBotProfile.SelectedValueChanged += (s, e) => UpdatePreview();
-
-            _numBotRailWidth = CreateStepper(0.8); _numBotRailHeight = CreateStepper(0.8);
-            _numBotRailPos = CreateStepper(-2.0); _numBotRailOffset = CreateStepper(0.0);
-            _numBotRailRot = CreateStepper(0, 0, 5);
-
+            _chkBotRail = new CheckBox { Text = "Enable Bottom Rail", Checked = true, Font = _fontStandard }; _chkBotRail.CheckedChanged += (s, e) => UpdatePreview();
+            _drpBotProfile = new DropDown { Font = _fontStandard }; FillDrp(_drpBotProfile); _drpBotProfile.SelectedValueChanged += (s, e) => UpdatePreview();
+            _numBotRailWidth = CreateStepper(0.8); _numBotRailHeight = CreateStepper(0.8); _numBotRailPos = CreateStepper(-2.0); _numBotRailOffset = CreateStepper(0.0); _numBotRailRot = CreateStepper(0, 0, 5);
             var botGroup = BuildRailGroup("Bottom Rail", _chkBotRail, _drpBotProfile, _numBotRailWidth, _numBotRailHeight, _numBotRailPos, _numBotRailOffset, _numBotRailRot);
 
             var layout = new DynamicLayout { Padding = 10, Spacing = new Size(5, 5) };
-            layout.BeginVertical();
-            layout.AddRow(topGroup);
-            layout.AddRow(null);
-            layout.AddRow(botGroup);
-            layout.EndVertical();
-
+            layout.BeginVertical(); layout.AddRow(topGroup); layout.AddRow(null); layout.AddRow(botGroup); layout.EndVertical();
             return new Scrollable { Content = layout, Border = BorderType.None };
         }
 
@@ -309,66 +257,26 @@ namespace NewRhinoGold.Studio
             _chkMoveAll = new CheckBox { Text = "Move All together", Font = _fontStandard };
             _sortLayout = new StackLayout { Spacing = 5, HorizontalContentAlignment = HorizontalAlignment.Stretch };
             _scrollSort = new Scrollable { Content = _sortLayout, Border = BorderType.Bezel, Height = 300 };
-
             var layout = new DynamicLayout { Padding = 10, Spacing = new Size(5, 5) };
-            layout.BeginVertical();
-            layout.AddRow(_chkMoveAll);
-            layout.AddRow(new Label { Text = "Prong Positions on Curve (0-100%):", Font = _fontStandard });
-            layout.AddRow(_scrollSort);
-            layout.EndVertical();
+            layout.BeginVertical(); layout.AddRow(_chkMoveAll); layout.AddRow(new Label { Text = "Prong Positions on Curve (0-100%):", Font = _fontStandard }); layout.AddRow(_scrollSort); layout.EndVertical();
             return layout;
         }
 
-        // ---------------------------------------------------------
-        // HELPERS
-        // ---------------------------------------------------------
-
-        private Label CreateHeader(string text)
-        {
-            return new Label { Text = text, Font = _fontHeader, TextColor = Colors.Gray };
-        }
-
-        private Label CreateLabel(string text)
-        {
-            return new Label { Text = text, VerticalAlignment = VerticalAlignment.Center, Font = _fontStandard };
-        }
-
-        private NumericStepper CreateStepper(double v, int d = 2, double inc = 0.1)
-        {
-            var s = new NumericStepper
-            {
-                Value = v,
-                DecimalPlaces = d,
-                Increment = inc,
-                Font = _fontInput,
-                Height = 26
-            };
-            s.ValueChanged += (sender, e) => UpdatePreview();
-            return s;
-        }
+        private Label CreateHeader(string text) => new Label { Text = text, Font = _fontHeader, TextColor = Colors.Gray };
+        private Label CreateLabel(string text) => new Label { Text = text, VerticalAlignment = VerticalAlignment.Center, Font = _fontStandard };
+        private NumericStepper CreateStepper(double v, int d = 2, double inc = 0.1) { var s = new NumericStepper { Value = v, DecimalPlaces = d, Increment = inc, Font = _fontInput, Height = 26 }; s.ValueChanged += (sender, e) => UpdatePreview(); return s; }
 
         private void RebuildSortList(int count)
         {
             if (_sortLayout == null) return;
             bool old = _suspendUpdates; _suspendUpdates = true;
-
-            _sortLayout.Items.Clear();
-            _prongSliders.Clear();
-            _currentProngPositions.Clear();
-
+            _sortLayout.Items.Clear(); _prongSliders.Clear(); _currentProngPositions.Clear();
             for (int i = 0; i < count; i++)
             {
-                double pos = (double)i / count;
-                _currentProngPositions.Add(pos);
-
+                double pos = (double)i / count; _currentProngPositions.Add(pos);
                 var slider = new Slider { MinValue = 0, MaxValue = 100, Value = (int)(pos * 100), Tag = i };
-                slider.ValueChanged += OnSortSliderChanged;
-                _prongSliders.Add(slider);
-
-                _sortLayout.Items.Add(new TableLayout
-                {
-                    Rows = { new TableRow(new Label { Text = $"P{i + 1}", Width = 40, Font = _fontStandard }, slider) }
-                });
+                slider.ValueChanged += OnSortSliderChanged; _prongSliders.Add(slider);
+                _sortLayout.Items.Add(new TableLayout { Rows = { new TableRow(new Label { Text = $"P{i + 1}", Width = 40, Font = _fontStandard }, slider) } });
             }
             _suspendUpdates = old;
         }
@@ -376,115 +284,39 @@ namespace NewRhinoGold.Studio
         private void OnSortSliderChanged(object sender, EventArgs e)
         {
             if (_suspendUpdates) return;
-            var slider = sender as Slider;
-            if (slider == null) return;
-
-            int idx = (int)slider.Tag;
-            int val = slider.Value;
-            double newValP = val / 100.0;
-            double oldValP = _currentProngPositions[idx];
-
+            var slider = sender as Slider; if (slider == null) return;
+            int idx = (int)slider.Tag; int val = slider.Value; double newValP = val / 100.0; double oldValP = _currentProngPositions[idx];
             if (_chkMoveAll.Checked == true)
             {
-                double diff = newValP - oldValP;
-                _suspendUpdates = true;
+                double diff = newValP - oldValP; _suspendUpdates = true;
                 for (int i = 0; i < _prongSliders.Count; i++)
                 {
-                    double current = _currentProngPositions[i];
-                    double shifted = current + diff;
-                    int sVal = (int)(shifted * 100);
-                    while (sVal > 100) sVal -= 100;
-                    while (sVal < 0) sVal += 100;
-
-                    _prongSliders[i].Value = sVal;
-                    _currentProngPositions[i] = shifted;
+                    double current = _currentProngPositions[i]; double shifted = current + diff;
+                    int sVal = (int)(shifted * 100); while (sVal > 100) sVal -= 100; while (sVal < 0) sVal += 100;
+                    _prongSliders[i].Value = sVal; _currentProngPositions[i] = shifted;
                 }
                 _suspendUpdates = false;
             }
-            else
-            {
-                _currentProngPositions[idx] = newValP;
-            }
+            else _currentProngPositions[idx] = newValP;
             UpdatePreview();
-        }
-
-        private HeadParameters GetParameters()
-        {
-            if (_numProngCount == null) return new HeadParameters();
-            var p = new HeadParameters();
-
-            p.ProngCount = (int)_numProngCount.Value;
-            p.GemInside = _numGemInside.Value;
-            p.TopDiameter = _numTopDia.Value; p.MidDiameter = _numMidDia.Value; p.BottomDiameter = _numBotDia.Value;
-            p.TopOffset = _numTopOff.Value; p.MidOffset = _numMidOff.Value; p.BottomOffset = _numBotOff.Value;
-            p.DepthBelowGem = _numDepthBelow.Value; p.Height = _numHeight.Value;
-
-            p.TopProfileRotation = _numTopRot.Value; p.MidProfileRotation = _numMidRot.Value; p.BottomProfileRotation = _numBotRot.Value;
-
-            p.EnableTopRail = _chkTopRail.Checked ?? false;
-            p.TopRailWidth = _numTopRailWidth.Value; p.TopRailThickness = _numTopRailHeight.Value;
-            p.TopRailPosition = _numTopRailPos.Value; p.TopRailOffset = _numTopRailOffset.Value; p.TopRailRotation = _numTopRailRot.Value;
-            if (_drpTopProfile.SelectedKey != null) p.TopRailProfileId = Guid.Parse(_drpTopProfile.SelectedKey);
-
-            p.EnableBottomRail = _chkBotRail.Checked ?? false;
-            p.BottomRailWidth = _numBotRailWidth.Value; p.BottomRailThickness = _numBotRailHeight.Value;
-            p.BottomRailPosition = _numBotRailPos.Value; p.BottomRailOffset = _numBotRailOffset.Value; p.BottomRailRotation = _numBotRailRot.Value;
-            if (_drpBotProfile.SelectedKey != null) p.BottomRailProfileId = Guid.Parse(_drpBotProfile.SelectedKey);
-
-            if (_gridProfiles.SelectedItem is ProfileItem pi) p.ProfileId = pi.Id;
-
-            if (_currentProngPositions.Count > 0) p.ProngPositions = new List<double>(_currentProngPositions);
-            else
-            {
-                p.ProngPositions = new List<double>();
-                for (int i = 0; i < p.ProngCount; i++) p.ProngPositions.Add((double)i / p.ProngCount);
-            }
-            return p;
         }
 
         private void OnSelectGem(object sender, EventArgs e)
         {
-            var go = new GetObject();
-            go.SetCommandPrompt("Select Gems");
-            go.GeometryFilter = ObjectType.Brep | ObjectType.Mesh;
-            go.EnablePreSelect(true, true);
-            Visible = false;
-            go.GetMultiple(1, 0);
-            Visible = true;
-
+            var go = new GetObject(); go.SetCommandPrompt("Select Gems"); go.GeometryFilter = ObjectType.Brep | ObjectType.Mesh; go.EnablePreSelect(true, true);
+            Visible = false; go.GetMultiple(1, 0); Visible = true;
             if (go.CommandResult() == Rhino.Commands.Result.Success)
             {
-                _selectedGems.Clear();
-                double totalSize = 0;
-                int count = 0;
-
+                _selectedGems.Clear(); double totalSize = 0; int count = 0;
                 foreach (var objRef in go.Objects())
                 {
                     var obj = objRef.Object();
-                    if (RhinoGoldHelper.TryGetGemData(obj, out Curve c, out Plane p, out double s))
-                    {
-                        // FIX CS0246: Expliziter Typ
-                        _selectedGems.Add(new NewRhinoGold.Helpers.GemData { Id = obj.Id, Curve = c, Plane = p, Size = s });
-                        totalSize += s;
-                        count++;
-                    }
+                    if (RhinoGoldHelper.TryGetGemData(obj, out Curve c, out Plane p, out double s)) { _selectedGems.Add(new NewRhinoGold.Helpers.GemData { Id = obj.Id, Curve = c, Plane = p, Size = s }); totalSize += s; count++; }
                 }
-
                 if (_selectedGems.Count > 0)
                 {
                     _btnSelectGem.Text = $"{_selectedGems.Count} Gems Selected";
-
-                    if (!_suspendUpdates && count > 0)
-                    {
-                        bool oldSuspend = _suspendUpdates;
-                        _suspendUpdates = true;
-                        double avgSize = totalSize / count;
-                        double prongSize = avgSize * 0.30;
-                        _numTopDia.Value = prongSize;
-                        _numMidDia.Value = prongSize;
-                        _numBotDia.Value = prongSize;
-                        _suspendUpdates = oldSuspend;
-                    }
+                    if (!_suspendUpdates && count > 0) { bool oldSuspend = _suspendUpdates; _suspendUpdates = true; double avgSize = totalSize / count; double prongSize = avgSize * 0.30; _numTopDia.Value = prongSize; _numMidDia.Value = prongSize; _numBotDia.Value = prongSize; _suspendUpdates = oldSuspend; }
                     UpdatePreview();
                 }
             }
@@ -492,31 +324,16 @@ namespace NewRhinoGold.Studio
 
         private void UpdatePreview()
         {
-            if (_suspendUpdates) return;
-            if (_selectedGems.Count == 0) return;
-
+            if (_suspendUpdates || _selectedGems.Count == 0) return;
             var param = GetParameters();
             var allBreps = new List<Brep>();
             var debugCurves = new List<Curve>();
-
             foreach (var gem in _selectedGems)
             {
                 var parts = HeadBuilder.CreateHead(gem.Curve, gem.Plane, param);
                 if (parts != null) allBreps.AddRange(parts);
-
                 if (gem.Curve != null) debugCurves.Add(gem.Curve.DuplicateCurve());
-                if (gem.Plane.IsValid)
-                {
-                    // FIX CS1503: Rectangle3d(Plane, double width, double height) - centered
-                    var rect = new Rectangle3d(gem.Plane, 4.0, 4.0);
-                    debugCurves.Add(rect.ToNurbsCurve());
-
-                    Point3d p1 = gem.Plane.Origin;
-                    Point3d p2 = p1 + (gem.Plane.ZAxis * 5.0);
-                    debugCurves.Add(new Line(p1, p2).ToNurbsCurve());
-                }
             }
-
             _previewConduit.setbreps(allBreps.ToArray());
             _previewConduit.setcurves(debugCurves.ToArray());
             RhinoDoc.ActiveDoc.Views.Redraw();
@@ -534,40 +351,21 @@ namespace NewRhinoGold.Studio
                 var parts = HeadBuilder.CreateHead(gem.Curve, gem.Plane, param);
                 if (parts != null && parts.Count > 0)
                 {
-                    var smartData = new HeadSmartData(param, gem.Id, gem.Plane);
+                    foreach (var part in parts)
+                    {
+                        if (!part.IsValid) part.Repair(0.001);
+                        if (!part.IsSolid) part.CapPlanarHoles(0.001);
+                    }
 
-                    // LOGIK: Editieren oder Neu?
+                    var smartData = new HeadSmartData(param, gem.Id, gem.Plane);
                     if (_editingObjectId != Guid.Empty)
                     {
-                        // Wir ersetzen das Objekt, das angeklickt wurde (_editingObjectId), mit dem ERSTEN Teil des neuen Heads.
-                        // Falls der neue Head aus MEHR Teilen besteht, fügen wir den Rest als neue Objekte hinzu.
-                        // (Hinweis: Das löst nicht das Problem, alte "Geschwister-Teile" zu löschen, wenn sie nicht gruppiert sind).
-
-                        var firstPart = parts[0];
-                        firstPart.UserData.Add(smartData);
-
-                        doc.Objects.Replace(_editingObjectId, firstPart);
-
-                        // Restliche Teile hinzufügen (falls der Head aus mehreren Teilen besteht)
-                        for (int i = 1; i < parts.Count; i++)
-                        {
-                            var attr = doc.CreateDefaultAttributes();
-                            attr.Name = "SmartHead";
-                            parts[i].UserData.Add(smartData);
-                            doc.Objects.AddBrep(parts[i], attr);
-                        }
-                        RhinoApp.WriteLine("Head updated (Primary part replaced).");
+                        doc.Objects.Replace(_editingObjectId, parts[0]); parts[0].UserData.Add(smartData);
+                        for (int i = 1; i < parts.Count; i++) { var attr = doc.CreateDefaultAttributes(); attr.Name = "SmartHead"; parts[i].UserData.Add(smartData); doc.Objects.AddBrep(parts[i], attr); }
                     }
                     else
                     {
-                        // Normaler Erstell-Modus
-                        foreach (var b in parts)
-                        {
-                            var attr = doc.CreateDefaultAttributes();
-                            attr.Name = "SmartHead";
-                            b.UserData.Add(smartData);
-                            doc.Objects.AddBrep(b, attr);
-                        }
+                        foreach (var b in parts) { var attr = doc.CreateDefaultAttributes(); attr.Name = "SmartHead"; b.UserData.Add(smartData); doc.Objects.AddBrep(b, attr); }
                     }
                 }
             }
@@ -584,6 +382,7 @@ namespace NewRhinoGold.Studio
             Visible = false;
             go.Get();
             Visible = true;
+
             if (go.CommandResult() == Rhino.Commands.Result.Success)
             {
                 var crv = go.Object(0).Curve();
@@ -593,101 +392,82 @@ namespace NewRhinoGold.Studio
                     string name = dlg.ShowModal(this);
                     if (!string.IsNullOrEmpty(name))
                     {
-                        ProfileLibrary.AddCurve(name, crv);
-                        _gridProfiles.DataStore = null;
-                        _gridProfiles.DataStore = ProfileLibrary.Items;
+                        // Speichern in "Curves" Ordner
+                        bool ok = ProfileLoader.SaveProfile(name, crv, "Curves");
+                        if (ok)
+                        {
+                            _gridProfiles.DataStore = HeadProfileLibrary.GetProfileItems();
+                            void RefreshDrp(DropDown d)
+                            {
+                                d.Items.Clear();
+                                foreach (var n in HeadProfileLibrary.GetProfileNames())
+                                    d.Items.Add(new ListItem { Text = n, Key = n });
+                            }
+                            RefreshDrp(_drpTopProfile);
+                            RefreshDrp(_drpBotProfile);
+                        }
                     }
                 }
             }
         }
 
-        // --- NEW: EDIT FUNCTIONALITY (LoadSmartData) ---
-        // Dies wurde hinzugefügt, damit EditSmartObjectCommand darauf zugreifen kann.
+        private HeadParameters GetParameters()
+        {
+            if (_numProngCount == null) return new HeadParameters();
+            var p = new HeadParameters();
+            p.ProngCount = (int)_numProngCount.Value; p.GemInside = _numGemInside.Value;
+            p.TopDiameter = _numTopDia.Value; p.MidDiameter = _numMidDia.Value; p.BottomDiameter = _numBotDia.Value;
+            p.TopOffset = _numTopOff.Value; p.MidOffset = _numMidOff.Value; p.BottomOffset = _numBotOff.Value;
+            p.DepthBelowGem = _numDepthBelow.Value; p.Height = _numHeight.Value;
+            p.TopProfileRotation = _numTopRot.Value; p.MidProfileRotation = _numMidRot.Value; p.BottomProfileRotation = _numBotRot.Value;
+
+            p.EnableTopRail = _chkTopRail.Checked ?? false;
+            p.TopRailWidth = _numTopRailWidth.Value; p.TopRailThickness = _numTopRailHeight.Value; p.TopRailPosition = _numTopRailPos.Value; p.TopRailOffset = _numTopRailOffset.Value; p.TopRailRotation = _numTopRailRot.Value;
+            if (_drpTopProfile.SelectedKey != null) p.TopRailProfileName = _drpTopProfile.SelectedKey;
+
+            p.EnableBottomRail = _chkBotRail.Checked ?? false;
+            p.BottomRailWidth = _numBotRailWidth.Value; p.BottomRailThickness = _numBotRailHeight.Value; p.BottomRailPosition = _numBotRailPos.Value; p.BottomRailOffset = _numBotRailOffset.Value; p.BottomRailRotation = _numBotRailRot.Value;
+            if (_drpBotProfile.SelectedKey != null) p.BottomRailProfileName = _drpBotProfile.SelectedKey;
+
+            if (_gridProfiles.SelectedItem is HeadProfileItem pi) p.ProfileName = pi.Name;
+
+            if (_currentProngPositions.Count > 0) p.ProngPositions = new List<double>(_currentProngPositions);
+            else { p.ProngPositions = new List<double>(); for (int i = 0; i < p.ProngCount; i++) p.ProngPositions.Add((double)i / p.ProngCount); }
+            return p;
+        }
+
         public void LoadSmartData(HeadSmartData data, Guid objectId)
         {
             if (data == null) return;
-            _editingObjectId = objectId;
-            _btnBuild.Text = "Update"; // Button Text ändern
-            _suspendUpdates = true;
-
-            // 1. General
-            _numProngCount.Value = data.ProngCount;
-            RebuildSortList(data.ProngCount);
-
+            _editingObjectId = objectId; _btnBuild.Text = "Update"; _suspendUpdates = true;
+            _numProngCount.Value = data.ProngCount; RebuildSortList(data.ProngCount);
             _numGemInside.Value = data.GemInside;
-            _numTopDia.Value = data.TopDiameter;
-            _numMidDia.Value = data.MidDiameter;
-            _numBotDia.Value = data.BottomDiameter;
-            _numTopOff.Value = data.TopOffset;
-            _numMidOff.Value = data.MidOffset;
-            _numBotOff.Value = data.BottomOffset;
-            _numDepthBelow.Value = data.DepthBelowGem;
-            _numHeight.Value = data.Height;
+            _numTopDia.Value = data.TopDiameter; _numMidDia.Value = data.MidDiameter; _numBotDia.Value = data.BottomDiameter;
+            _numTopOff.Value = data.TopOffset; _numMidOff.Value = data.MidOffset; _numBotOff.Value = data.BottomOffset;
+            _numDepthBelow.Value = data.DepthBelowGem; _numHeight.Value = data.Height;
+            _numTopRot.Value = data.TopProfileRotation; _numMidRot.Value = data.MidProfileRotation; _numBotRot.Value = data.BottomProfileRotation;
 
-            // 2. Profile
-            _numTopRot.Value = data.TopProfileRotation;
-            _numMidRot.Value = data.MidProfileRotation;
-            _numBotRot.Value = data.BottomProfileRotation;
-
-            if (data.ProfileId != Guid.Empty)
+            // Profil Selektierung über Namen
+            if (!string.IsNullOrEmpty(data.ProfileName))
             {
-                int index = -1;
-                var items = ProfileLibrary.Items;
-                for (int i = 0; i < items.Count; i++)
+                var list = (List<HeadProfileItem>)_gridProfiles.DataStore;
+                if (list != null)
                 {
-                    if (items[i].Id == data.ProfileId) { index = i; break; }
-                }
-                if (index >= 0) _gridProfiles.SelectRow(index);
-            }
-
-            // 3. Rails
-            _chkTopRail.Checked = data.EnableTopRail;
-            _numTopRailWidth.Value = data.TopRailWidth;
-            _numTopRailHeight.Value = data.TopRailThickness;
-            _numTopRailPos.Value = data.TopRailPosition;
-            _numTopRailOffset.Value = data.TopRailOffset;
-            _numTopRailRot.Value = data.TopRailRotation;
-            foreach (var item in _drpTopProfile.Items)
-            {
-                if (item.Key == data.TopRailProfileId.ToString()) { _drpTopProfile.SelectedKey = item.Key; break; }
-            }
-
-            _chkBotRail.Checked = data.EnableBottomRail;
-            _numBotRailWidth.Value = data.BottomRailWidth;
-            _numBotRailHeight.Value = data.BottomRailThickness;
-            _numBotRailPos.Value = data.BottomRailPosition;
-            _numBotRailOffset.Value = data.BottomRailOffset;
-            _numBotRailRot.Value = data.BottomRailRotation;
-            foreach (var item in _drpBotProfile.Items)
-            {
-                if (item.Key == data.BottomRailProfileId.ToString()) { _drpBotProfile.SelectedKey = item.Key; break; }
-            }
-
-            // 4. Sort (Prong Positions)
-            if (data.ProngPositions != null && data.ProngPositions.Count == _prongSliders.Count)
-            {
-                _currentProngPositions = new List<double>(data.ProngPositions);
-                for (int i = 0; i < _prongSliders.Count; i++)
-                {
-                    _prongSliders[i].Value = (int)(_currentProngPositions[i] * 100);
+                    for (int i = 0; i < list.Count; i++)
+                        if (list[i].Name == data.ProfileName) { _gridProfiles.SelectRow(i); break; }
                 }
             }
 
-            // 5. Stein wiederfinden (für Vorschau)
+            _chkTopRail.Checked = data.EnableTopRail; _numTopRailWidth.Value = data.TopRailWidth; _numTopRailHeight.Value = data.TopRailThickness; _numTopRailPos.Value = data.TopRailPosition; _numTopRailOffset.Value = data.TopRailOffset; _numTopRailRot.Value = data.TopRailRotation;
+            if (!string.IsNullOrEmpty(data.TopRailProfileName)) _drpTopProfile.SelectedKey = data.TopRailProfileName;
+
+            _chkBotRail.Checked = data.EnableBottomRail; _numBotRailWidth.Value = data.BottomRailWidth; _numBotRailHeight.Value = data.BottomRailThickness; _numBotRailPos.Value = data.BottomRailPosition; _numBotRailOffset.Value = data.BottomRailOffset; _numBotRailRot.Value = data.BottomRailRotation;
+            if (!string.IsNullOrEmpty(data.BottomRailProfileName)) _drpBotProfile.SelectedKey = data.BottomRailProfileName;
+
+            if (data.ProngPositions != null && data.ProngPositions.Count == _prongSliders.Count) { _currentProngPositions = new List<double>(data.ProngPositions); for (int i = 0; i < _prongSliders.Count; i++) _prongSliders[i].Value = (int)(_currentProngPositions[i] * 100); }
             var doc = RhinoDoc.ActiveDoc;
-            if (doc != null)
-            {
-                var gemObj = doc.Objects.FindId(data.GemId);
-                if (gemObj != null && RhinoGoldHelper.TryGetGemData(gemObj, out Curve c, out Plane p, out double s))
-                {
-                    _selectedGems.Clear();
-                    _selectedGems.Add(new NewRhinoGold.Helpers.GemData { Id = gemObj.Id, Curve = c, Plane = p, Size = s });
-                    _btnSelectGem.Text = "Gem Loaded";
-                }
-            }
-
-            _suspendUpdates = false;
-            UpdatePreview();
+            if (doc != null) { var gemObj = doc.Objects.FindId(data.GemId); if (gemObj != null && RhinoGoldHelper.TryGetGemData(gemObj, out Curve c, out Plane p, out double s)) { _selectedGems.Clear(); _selectedGems.Add(new NewRhinoGold.Helpers.GemData { Id = gemObj.Id, Curve = c, Plane = p, Size = s }); _btnSelectGem.Text = "Gem Loaded"; } }
+            _suspendUpdates = false; UpdatePreview();
         }
     }
 }

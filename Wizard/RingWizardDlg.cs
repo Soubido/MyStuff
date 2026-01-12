@@ -2,13 +2,14 @@ using Eto.Drawing;
 using Eto.Forms;
 using NewRhinoGold.Core;
 using Rhino;
-using Rhino.DocObjects; // Wichtig für ObjectAttributes
+using Rhino.DocObjects;
 using Rhino.Geometry;
 using Rhino.UI;
 using Rhino.Input;
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using NewRhinoGold.Helpers;
 
 namespace NewRhinoGold.Wizard
 {
@@ -23,8 +24,6 @@ namespace NewRhinoGold.Wizard
     {
         private readonly RingDesignManager _manager;
         private readonly RingPreviewConduit _conduit;
-
-        // State für Edit-Funktion
         private Guid _editingObjectId = Guid.Empty;
 
         // UI Controls
@@ -43,7 +42,7 @@ namespace NewRhinoGold.Wizard
         private CheckBox _chkActive;
         private CheckBox _chkFlip;
         private Label _lblWeight;
-        private Button _btnBake; // Referenz speichern für Text-Änderung
+        private Button _btnBake;
 
         private RingPosition _currentPos;
         private bool _isUpdatingUI = false;
@@ -80,7 +79,7 @@ namespace NewRhinoGold.Wizard
 
         private Control BuildMainLayout()
         {
-            // --- 1. SETTINGS SECTION ---
+            // 1. SETTINGS
             var grpSettings = new GroupBox { Text = "General Settings", Padding = 5, Font = Eto.Drawing.Fonts.Sans(8, Eto.Drawing.FontStyle.Bold) };
 
             _ddMaterials = new DropDown { Height = 24 };
@@ -95,24 +94,20 @@ namespace NewRhinoGold.Wizard
             _lblWeight = new Label { Text = "Weight: ", TextColor = Colors.Blue, Font = Eto.Drawing.Fonts.Sans(9, Eto.Drawing.FontStyle.Bold), VerticalAlignment = VerticalAlignment.Center };
 
             var layoutSettings = new TableLayout { Spacing = new Size(5, 5) };
-
             layoutSettings.Rows.Add(new TableRow(new Label { Text = "Material:", VerticalAlignment = VerticalAlignment.Center }, _ddMaterials));
             layoutSettings.Rows.Add(new TableRow(new Label { Text = "Ring Size:", VerticalAlignment = VerticalAlignment.Center }, null));
             layoutSettings.Rows.Add(new TableRow(_listSizes) { ScaleHeight = false });
 
             var statsLayout = new TableLayout { Spacing = new Size(10, 0) };
             statsLayout.Rows.Add(new TableRow(
-                new Label { Text = "Ø:", Font = Eto.Drawing.Fonts.Sans(8), VerticalAlignment = VerticalAlignment.Center },
-                _numDia,
-                new Label { Text = "Cir:", Font = Eto.Drawing.Fonts.Sans(8), VerticalAlignment = VerticalAlignment.Center },
-                _numCirc
+                new Label { Text = "Ø:", Font = Eto.Drawing.Fonts.Sans(8), VerticalAlignment = VerticalAlignment.Center }, _numDia,
+                new Label { Text = "Cir:", Font = Eto.Drawing.Fonts.Sans(8), VerticalAlignment = VerticalAlignment.Center }, _numCirc
             ));
             layoutSettings.Rows.Add(new TableRow(statsLayout));
             layoutSettings.Rows.Add(new TableRow(_lblWeight));
-
             grpSettings.Content = layoutSettings;
 
-            // --- 2. NAVIGATOR (MAP) ---
+            // 2. NAVIGATOR
             var grpMap = new GroupBox { Text = "Profile Navigator", Padding = 5, Font = Eto.Drawing.Fonts.Sans(8, Eto.Drawing.FontStyle.Bold) };
             var pixelLayout = new PixelLayout { Size = new Size(340, 160) };
             int cx = 170; int cy = 80; int radius = 60;
@@ -137,12 +132,10 @@ namespace NewRhinoGold.Wizard
             _btnBottomLeft = AddCircularBtn(pixelLayout, "BL", RingPosition.BottomLeft, cx, cy, radius, 135);
             _btnLeft = AddCircularBtn(pixelLayout, "L", RingPosition.Left, cx, cy, radius, 180);
             _btnTopLeft = AddCircularBtn(pixelLayout, "TL", RingPosition.TopLeft, cx, cy, radius, 225);
-
             grpMap.Content = pixelLayout;
 
-            // --- 3. PARAMETERS (EDIT) ---
+            // 3. EDIT
             var grpEdit = new GroupBox { Text = "Section Parameters", Padding = 5, Font = Eto.Drawing.Fonts.Sans(8, Eto.Drawing.FontStyle.Bold) };
-
             _numWidth = new NumericStepper { DecimalPlaces = 2, MinValue = 0.5, MaxValue = 30, Width = 65, Increment = 0.1, Font = Eto.Drawing.Fonts.Sans(8) };
             _numHeight = new NumericStepper { DecimalPlaces = 2, MinValue = 0.5, MaxValue = 30, Width = 65, Increment = 0.1, Font = Eto.Drawing.Fonts.Sans(8) };
             _numRot = new NumericStepper { DecimalPlaces = 1, MinValue = -180, MaxValue = 180, Width = 65, Increment = 1.0, Font = Eto.Drawing.Fonts.Sans(8) };
@@ -161,10 +154,8 @@ namespace NewRhinoGold.Wizard
             _chkFlip.CheckedChanged += (s, e) => { if (!_isUpdatingUI) { _manager.ToggleFlipProfile(_currentPos); UpdateGeometry(); } };
 
             var layoutEdit = new TableLayout { Spacing = new Size(5, 5) };
-
             var checkLayout = new StackLayout { Orientation = Orientation.Horizontal, Spacing = 10, Items = { _chkActive, _chkMirror, _chkFlip } };
             layoutEdit.Rows.Add(new TableRow(checkLayout));
-
             var gridValues = new TableLayout { Spacing = new Size(5, 5) };
             gridValues.Rows.Add(new TableRow(
                 new Label { Text = "Width:", VerticalAlignment = VerticalAlignment.Center, Font = Eto.Drawing.Fonts.Sans(8) }, _numWidth,
@@ -177,12 +168,11 @@ namespace NewRhinoGold.Wizard
             layoutEdit.Rows.Add(new TableRow(gridValues));
             grpEdit.Content = layoutEdit;
 
-            // --- 4. FOOTER ---
+            // 4. FOOTER
             _btnBake = new Button { Text = "Create Ring", Height = 26 };
             _btnBake.Click += OnBakeClicked;
             var btnCancel = new Button { Text = "Cancel", Height = 26 };
             btnCancel.Click += (s, e) => Close();
-
             var footerLayout = new TableLayout { Spacing = new Size(5, 0) };
             footerLayout.Rows.Add(new TableRow(null, btnCancel, _btnBake));
 
@@ -199,29 +189,91 @@ namespace NewRhinoGold.Wizard
 
         private void OnBakeClicked(object sender, EventArgs e)
         {
-            var finalRing = GetFinalRing();
-            if (finalRing != null && finalRing.Length > 0)
+            // 1. Geometrie holen (Sicherheits-Check)
+            var finalBreps = GetFinalRing();
+
+            // Wenn Geometrie null ist, abbrechen (verhindert Crash beim Zugriff auf Index 0)
+            if (finalBreps == null || finalBreps.Length == 0)
             {
-                var doc = RhinoDoc.ActiveDoc;
-                string undoName = _editingObjectId != Guid.Empty ? "Update Ring" : "Create Ring";
-                uint sn = doc.BeginUndoRecord(undoName);
+                MessageBox.Show("Error: Could not calculate ring geometry.", MessageBoxType.Error);
+                return;
+            }
 
-                try
+            Brep finalRing = finalBreps[0];
+            var doc = RhinoDoc.ActiveDoc;
+
+            // 2. Geometrie-Validierung (Wie besprochen)
+            if (!finalRing.IsValid)
+            {
+                finalRing.Repair(doc.ModelAbsoluteTolerance);
+                if (!finalRing.IsValid)
                 {
-                    // 1. Attribute erstellen
-                    var attr = doc.CreateDefaultAttributes();
-                    attr.Name = "SmartRing";
-                    attr.SetUserString("RG RING", "1");
+                    MessageBox.Show("Geometry is invalid. Please check profiles.", "Error", MessageBoxButtons.OK, MessageBoxType.Error);
+                    return;
+                }
+            }
 
-                    // Material
-                    if (_ddMaterials.SelectedKey != null) attr.SetUserString("RG MATERIAL ID", _ddMaterials.SelectedKey);
+            // Prüfung: Ist der Ring geschlossen?
+            if (!finalRing.IsSolid)
+            {
+                // Versuch, die Löcher zu schließen
+                // WICHTIG: Nicht direkt überschreiben, da Ergebnis null sein kann!
+                var cappedRing = finalRing.CapPlanarHoles(doc.ModelAbsoluteTolerance);
 
-                    // 2. SmartData sammeln
-                    var sections = new List<RingSmartSection>();
-                    // Wir iterieren über alle Positionen, um den Status zu speichern
-                    foreach (RingPosition pos in Enum.GetValues(typeof(RingPosition)))
+                if (cappedRing != null)
+                {
+                    // Nur übernehmen, wenn es geklappt hat
+                    finalRing = cappedRing;
+                }
+
+                // Jetzt prüfen wir erneut (finalRing ist hier garantiert nicht null, 
+                // entweder ist es der neue geschlossene oder der alte offene Ring)
+                if (!finalRing.IsSolid)
+                {
+                    var res = MessageBox.Show(
+                        "The ring is NOT a closed solid (Naked Edges detected).\nCreate anyway?",
+                        "Warning: Not Watertight",
+                        MessageBoxButtons.YesNo,
+                        MessageBoxType.Warning);
+
+                    if (res == DialogResult.No) return;
+                }
+            }
+
+            // 3. Daten schreiben (ABSTURZSICHER GEMACHT)
+            string undoName = _editingObjectId != Guid.Empty ? "Update Ring" : "Create Ring";
+            uint sn = doc.BeginUndoRecord(undoName);
+
+            try
+            {
+                // Attribute erstellen
+                var attr = doc.CreateDefaultAttributes();
+                attr.Name = "SmartRing";
+                attr.SetUserString("RG RING", "1");
+
+                // SAFE ACCESS: Material ID (verhindert NullRef)
+                string matId = _ddMaterials.SelectedKey ?? "metal.au750"; // Fallback, falls null
+                attr.SetUserString("RG MATERIAL ID", matId);
+
+                // SAFE ACCESS: Ring Size (verhindert NullRef)
+                double currentSize = 54.0; // Standardwert
+                if (_listSizes.SelectedValue != null)
+                {
+                    double.TryParse(_listSizes.SelectedValue.ToString(), out currentSize);
+                }
+
+                // SAFE ACCESS: Checkbox
+                bool isMirrored = _chkMirror.Checked == true; // Behandelt null als false
+
+                // SmartData zusammenbauen
+                var sections = new List<RingSmartSection>();
+
+                // Manager ist sicher, da im Konstruktor erstellt, aber wir prüfen trotzdem die Sektionen
+                foreach (RingPosition pos in Enum.GetValues(typeof(RingPosition)))
+                {
+                    var sec = _manager.GetSection(pos);
+                    if (sec != null) // Sicher ist sicher
                     {
-                        var sec = _manager.GetSection(pos);
                         sections.Add(new RingSmartSection
                         {
                             PositionIndex = (int)pos,
@@ -229,48 +281,42 @@ namespace NewRhinoGold.Wizard
                             Height = sec.Height,
                             Rotation = sec.Rotation,
                             OffsetY = sec.OffsetY,
-                            ProfileName = sec.ProfileName,
+                            ProfileName = sec.ProfileName ?? "D-Shape", // Fallback
                             IsActive = sec.IsActive,
                             FlipX = sec.FlipX
                         });
                     }
-
-                    double currentSize = double.Parse(_listSizes.SelectedValue.ToString());
-                    string matId = _ddMaterials.SelectedKey ?? "Unknown";
-                    var smartData = new RingSmartData(currentSize, matId, _chkMirror.Checked == true, sections);
-
-                    // 3. UserData anhängen
-                    // Wir gehen davon aus, dass der Ring ein zusammenhängendes Brep ist.
-                    // Falls er aus mehreren Teilen besteht, hängen wir die Daten an den Hauptteil (Index 0).
-                    if (finalRing.Length > 0)
-                    {
-                        finalRing[0].UserData.Add(smartData);
-
-                        // UserString auch an Geometrie für doppelte Sicherheit
-                        finalRing[0].SetUserString("RG RING", "1");
-                    }
-
-                    // 4. Ersetzen oder Hinzufügen
-                    if (_editingObjectId != Guid.Empty)
-                    {
-                        doc.Objects.Replace(_editingObjectId, finalRing[0]);
-                        RhinoApp.WriteLine("Ring updated.");
-                    }
-                    else
-                    {
-                        doc.Objects.AddBrep(finalRing[0], attr);
-                        RhinoApp.WriteLine("Ring created.");
-                    }
                 }
-                finally
+
+                var smartData = new RingSmartData(currentSize, matId, isMirrored, sections);
+
+                // UserData anhängen
+                finalRing.UserData.Add(smartData);
+
+                // Ins Dokument einfügen
+                if (_editingObjectId != Guid.Empty)
                 {
-                    doc.EndUndoRecord(sn);
+                    doc.Objects.Replace(_editingObjectId, finalRing);
+                    RhinoApp.WriteLine("Ring updated.");
                 }
-
-                doc.Views.Redraw();
-                Close();
+                else
+                {
+                    doc.Objects.AddBrep(finalRing, attr);
+                    RhinoApp.WriteLine("Ring created.");
+                }
             }
-            else { MessageBox.Show("Error: No geometry.", MessageBoxType.Error); }
+            catch (Exception ex)
+            {
+                // Fehler abfangen, damit Rhino nicht abstürzt, und Meldung zeigen
+                MessageBox.Show($"Critical Error while baking: {ex.Message}", MessageBoxType.Error);
+            }
+            finally
+            {
+                doc.EndUndoRecord(sn);
+            }
+
+            doc.Views.Redraw();
+            Close();
         }
 
         private void OnPickCurveClicked(object sender, EventArgs e)
@@ -280,19 +326,84 @@ namespace NewRhinoGold.Wizard
             go.SetCommandPrompt("Select Open Profile Curve");
             go.GeometryFilter = Rhino.DocObjects.ObjectType.Curve;
             go.Get();
+            this.Visible = true;
+
             if (go.CommandResult() == Rhino.Commands.Result.Success)
             {
                 var crv = go.Object(0).Curve();
                 if (crv != null)
                 {
+                    // Vorschau
                     _manager.UpdateSection(_currentPos, _numWidth.Value, _numHeight.Value, _numRot.Value, _numOffsetY.Value, crv);
                     bool old = _isUpdatingUI; _isUpdatingUI = true;
                     _ddProfile.SelectedKey = null;
                     _isUpdatingUI = old;
                     UpdateGeometry();
+
+                    // Speichern Abfrage
+                    var result = MessageBox.Show("Save to Ring Profiles?", "Save Profile", MessageBoxButtons.YesNo, MessageBoxType.Question);
+                    if (result == DialogResult.Yes)
+                    {
+                        var inputDlg = new NewRhinoGold.Helpers.TextInputDialog("Save Profile", "RingProfile01");
+                        string name = inputDlg.ShowModal(this);
+
+                        if (!string.IsNullOrWhiteSpace(name))
+                        {
+                            // WICHTIG: Hier sagen wir "Profiles"
+                            bool saved = NewRhinoGold.Helpers.ProfileLoader.SaveProfile(name, crv, "Profiles");
+
+                            if (saved)
+                            {
+                                ReloadProfiles(name);
+                                _manager.UpdateSection(_currentPos, _numWidth.Value, _numHeight.Value, _numRot.Value, _numOffsetY.Value, name);
+                                RhinoApp.WriteLine($"Saved to Profiles/{name}.3dm");
+                            }
+                            else
+                            {
+                                MessageBox.Show("Could not save. Check 'Profiles' folder.", MessageBoxType.Error);
+                            }
+                        }
+                    }
                 }
             }
-            this.Visible = true;
+        }
+        private void ReloadProfiles(string selectName = null)
+        {
+            // Diese Methode macht im Prinzip das Gleiche wie FillProfileList, 
+            // aber versucht, das neu erstellte Item direkt auszuwählen.
+
+            var items = new List<ProfileListItem>();
+
+            // Namen neu abrufen (jetzt ist der neue dabei)
+            var names = RingProfileLibrary.GetProfileNames();
+            if (names == null || names.Count == 0) names = new List<string> { "D-Shape" };
+
+            foreach (var name in names)
+            {
+                var crv = RingProfileLibrary.GetOpenProfile(name);
+                items.Add(new ProfileListItem { Text = name, Image = GenerateProfileIcon(crv) });
+            }
+
+            _ddProfile.DataStore = items;
+
+            // Versuchen, den neuen Namen zu selektieren
+            if (selectName != null)
+            {
+                // Wir suchen das Item, dessen Key oder Text passt
+                var found = items.FirstOrDefault(i => i.Key == selectName || i.Text == selectName);
+                if (found != null)
+                {
+                    _ddProfile.SelectedValue = found;
+                }
+                else if (items.Count > 0)
+                {
+                    _ddProfile.SelectedIndex = 0;
+                }
+            }
+            else if (items.Count > 0)
+            {
+                _ddProfile.SelectedIndex = 0;
+            }
         }
 
         private void SaveCurrentValues()
@@ -412,7 +523,6 @@ namespace NewRhinoGold.Wizard
             return RingBuilder.BuildRing(radius, buildData.Slots, buildData.IsClosedLoop, true);
         }
 
-        // Helpers
         private Image GenerateProfileIcon(Curve crv)
         {
             if (crv == null) return null;
@@ -455,7 +565,6 @@ namespace NewRhinoGold.Wizard
             _ddProfile.DataStore = items; if (items.Count > 0) _ddProfile.SelectedIndex = 0;
         }
 
-        // --- NEW: EDIT FUNCTIONALITY ---
         public void LoadSmartData(RingSmartData data, Guid objectId)
         {
             if (data == null) return;
@@ -466,43 +575,29 @@ namespace NewRhinoGold.Wizard
             bool old = _isUpdatingUI;
             _isUpdatingUI = true;
 
-            // 1. Größe setzen
             foreach (var item in _listSizes.Items)
             {
                 if (item.Text == data.RingSize.ToString() || item.Key == data.RingSize.ToString()) { _listSizes.SelectedKey = item.Key; break; }
             }
 
-            // 2. Material setzen
             foreach (var item in _ddMaterials.Items)
             {
                 if (item.Key == data.MaterialId) { _ddMaterials.SelectedKey = item.Key; break; }
             }
 
-            // 3. Mirror
             _chkMirror.Checked = data.MirrorX;
             _manager.MirrorX = data.MirrorX;
 
-            // 4. Sektionen wiederherstellen
             foreach (var s in data.Sections)
             {
                 RingPosition pos = (RingPosition)s.PositionIndex;
-
-                // Profil update (aktiviert Section auch automatisch)
                 _manager.UpdateSection(pos, s.Width, s.Height, s.Rotation, s.OffsetY, s.ProfileName);
-
-                // Flags explizit setzen
-                if (!s.IsActive) _manager.ToggleActive(pos); // Wenn in data inaktiv, aber Manager default aktiv -> toggle
-                // HACK: Sauberer wäre eine explizite SetActive(pos, bool) Methode im Manager,
-                // aber Toggle funktioniert, wenn wir wissen, dass UpdateSection es aktiviert hat.
-                // Besser: Wir schauen uns das Resultat an und toggeln bei Bedarf.
                 var check = _manager.GetSection(pos);
                 if (check.IsActive != s.IsActive) _manager.ToggleActive(pos);
                 if (check.FlipX != s.FlipX) _manager.ToggleFlipProfile(pos);
             }
 
             _isUpdatingUI = old;
-
-            // UI mit Bottom initialisieren
             LoadPositionValues(RingPosition.Bottom);
             UpdateGeometry();
         }

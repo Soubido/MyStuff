@@ -10,11 +10,10 @@ namespace NewRhinoGold.Core
     public class CutterSmartData : UserData
     {
         private const int MAJOR = 1;
-        private const int MINOR = 0;
+        private const int MINOR = 1; // Version erhöht wegen String-Wechsel
 
         public Guid GemId { get; set; }
-        
-        // Parameter (Kopie von CutterParameters)
+
         public double GlobalScale { get; set; }
         public double Clearance { get; set; }
         public double TopHeight { get; set; }
@@ -22,9 +21,9 @@ namespace NewRhinoGold.Core
         public double SeatLevel { get; set; }
         public double BottomHeight { get; set; }
         public double BottomDiameterScale { get; set; }
-        
+
         public bool UseCustomProfile { get; set; }
-        public Guid ProfileId { get; set; }
+        public string ProfileName { get; set; } // CHANGE: String
         public double ProfileRotation { get; set; }
 
         public CutterSmartData() { }
@@ -40,7 +39,7 @@ namespace NewRhinoGold.Core
             BottomHeight = p.BottomHeight;
             BottomDiameterScale = p.BottomDiameterScale;
             UseCustomProfile = p.UseCustomProfile;
-            ProfileId = p.ProfileId;
+            ProfileName = p.ProfileName;
             ProfileRotation = p.ProfileRotation;
         }
 
@@ -58,7 +57,11 @@ namespace NewRhinoGold.Core
             BottomHeight = archive.ReadDouble();
             BottomDiameterScale = archive.ReadDouble();
             UseCustomProfile = archive.ReadBool();
-            ProfileId = archive.ReadGuid();
+
+            // Liest String (ab v1.1) oder Guid als Fallback
+            if (minor >= 1) ProfileName = archive.ReadString();
+            else { archive.ReadGuid(); ProfileName = "Round"; } // Legacy ignore
+
             ProfileRotation = archive.ReadDouble();
             return true;
         }
@@ -75,7 +78,9 @@ namespace NewRhinoGold.Core
             archive.WriteDouble(BottomHeight);
             archive.WriteDouble(BottomDiameterScale);
             archive.WriteBool(UseCustomProfile);
-            archive.WriteGuid(ProfileId);
+
+            archive.WriteString(ProfileName ?? "Round"); // CHANGE
+
             archive.WriteDouble(ProfileRotation);
             return true;
         }

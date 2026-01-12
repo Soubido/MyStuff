@@ -12,9 +12,10 @@ namespace NewRhinoGold.Core
             if (radiusMM < 1.0) radiusMM = 8.0;
             if (slots == null || slots.Length < 1) return null;
 
-            // 1. RAIL
+            // 1. RAIL (Schiene)
             var plane = new Plane(Point3d.Origin, Vector3d.XAxis, Vector3d.ZAxis);
             var circle = new Circle(plane, radiusMM);
+            // Wir rotieren den Startpunkt nach unten (-90°), damit der Seam unten liegt (üblicher für Ringe)
             circle.Rotate(-Math.PI / 2.0, plane.Normal, plane.Origin);
             Curve rail = circle.ToNurbsCurve();
             rail.Domain = new Interval(0, 1.0);
@@ -42,7 +43,6 @@ namespace NewRhinoGold.Core
                 shape.Transform(Transform.Scale(Plane.WorldXY, slot.Width / currentW, slot.Height / currentH, 1.0));
 
                 // B. ALIGNMENT (Auf Rail setzen)
-                // MinY auf 0 bringen (Radialer Kontaktpunkt)
                 bbox = shape.GetBoundingBox(true);
                 double shiftUp = -bbox.Min.Y;
                 shape.Transform(Transform.Translation(0, shiftUp, 0));
@@ -54,13 +54,9 @@ namespace NewRhinoGold.Core
                     shape.Rotate(rad, Vector3d.ZAxis, Point3d.Origin);
                 }
 
-                // D. OFFSET Y (KORRIGIERT: Sideways Shift)
-                // Anforderung: Offset Y soll in global Y (Sideways) stattfinden.
-                // Global Y entspricht der lokalen X-Achse (Breite) im Mapping.
-                // Daher verschieben wir hier in X.
+                // D. OFFSET Y (Sideways Shift)
                 if (Math.Abs(slot.OffsetY) > 0.001)
                 {
-                    // Verschiebung in X (Lokal) -> Y (Global/Sideways)
                     shape.Translate(slot.OffsetY, 0, 0);
                 }
 
@@ -79,12 +75,14 @@ namespace NewRhinoGold.Core
             // 3. SWEEP
             var sweep = new SweepOneRail();
             sweep.ClosedSweep = isClosedLoop;
-            sweep.AngleToleranceRadians = 0.01;
-            sweep.SweepTolerance = 0.001;
+            // Toleranzen etwas lockern für Sweep, damit er leichter schließt
+            sweep.AngleToleranceRadians = 0.02;
+            sweep.SweepTolerance = 0.01;
 
             Brep[] breps = null;
             try { breps = sweep.PerformSweep(rail, sweepShapes, sweepParams); } catch { }
 
+            // Fallback: Wenn ClosedSweep fehlschlägt, versuche es offen
             if ((breps == null || breps.Length == 0) && isClosedLoop)
             {
                 sweep.ClosedSweep = false;
@@ -93,20 +91,43 @@ namespace NewRhinoGold.Core
 
             if (breps == null || breps.Length == 0) return null;
 
-            // 4. SOLID CHECK
+            // 4. SOLID & VALIDITY CHECK
             var result = new List<Brep>();
+            double docTol = RhinoDoc.ActiveDoc != null ? RhinoDoc.ActiveDoc.ModelAbsoluteTolerance : 0.001;
+
             foreach (var b in breps)
             {
+                // Standardize richtet Knot-Vectors, Faces und Edges aus
                 b.Standardize();
-                b.JoinNakedEdges(0.001);
+
+                // Versuch 1: Einfaches Joinen von Naked Edges (für die Naht)
+                b.JoinNakedEdges(docTol);
 
                 if (solid && !b.IsSolid)
                 {
-                    if (isClosedLoop) b.JoinNakedEdges(0.01);
+                    if (isClosedLoop)
+                    {
+                        // Bei Ring: Naht schließen.
+                        // Manchmal ist die Lücke etwas größer als die Toleranz.
+                        b.JoinNakedEdges(docTol * 10.0);
+
+                        // Wenn immer noch nicht solid, ist es kaputt oder verdreht
+                        if (!b.IsSolid)
+                        {
+                            // Letzte Rettung: Brep.Join (falls Sweep mehrere Teile ausgespuckt hat, was er bei single rail selten tut)
+                            // Aber hier haben wir nur ein Brep b.
+                            // Wir belassen es dabei und lassen den Validator im Wizard entscheiden.
+                        }
+                    }
                     else
                     {
-                        var capped = b.CapPlanarHoles(0.001);
-                        if (capped != null) { result.Add(capped); continue; }
+                        // Bei offener Schiene: Deckflächen (Caps) drauf
+                        var capped = b.CapPlanarHoles(docTol);
+                        if (capped != null)
+                        {
+                            result.Add(capped);
+                            continue;
+                        }
                     }
                 }
                 result.Add(b);

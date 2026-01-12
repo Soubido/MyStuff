@@ -11,67 +11,53 @@ namespace NewRhinoGold.Helpers
 {
     public static class ProfileLoader
     {
+        // Cache: "OrdnerName/ProfilName" -> Kurve
         private static Dictionary<string, Curve> _curveCache = new Dictionary<string, Curve>();
-        private static string _curvesPath;
 
-        // Eigenschaft, um den Pfad sicher zu holen
-        public static string CurvesPath
+        // Hilfsmethode: Holt den Pfad zum Plugin-Verzeichnis (bin/Release)
+        private static string GetPluginDir()
         {
-            get
+            try
             {
-                if (_curvesPath == null)
-                {
-                    try
-                    {
-                        string assemblyPath = Assembly.GetExecutingAssembly().Location;
-                        string assemblyDir = Path.GetDirectoryName(assemblyPath);
-                        _curvesPath = Path.Combine(assemblyDir, "Curves");
-                    }
-                    catch
-                    {
-                        _curvesPath = null;
-                    }
-                }
-                return _curvesPath;
+                string assemblyPath = Assembly.GetExecutingAssembly().Location;
+                return Path.GetDirectoryName(assemblyPath);
             }
+            catch { return null; }
         }
 
-        public static List<string> GetAvailableProfiles()
+        // Lädt die Liste der Dateinamen aus einem bestimmten Ordner (z.B. "Profiles" oder "Curves")
+        public static List<string> GetAvailableProfiles(string folderName)
         {
-            var path = CurvesPath;
-            if (string.IsNullOrEmpty(path) || !Directory.Exists(path))
-            {
-                // DEBUG: Sag dem User, wo der Ordner sein sollte
-                if (path != null)
-                    RhinoApp.WriteLine($"[RingWizard] Curves-Ordner nicht gefunden. Erwartet hier: {path}");
+            string root = GetPluginDir();
+            if (root == null) return new List<string>();
 
-                return new List<string>();
-            }
+            // Pfad zusammenbauen: .../bin/Release/Profiles  ODER  .../bin/Release/Curves
+            string targetPath = Path.Combine(root, folderName);
+
+            if (!Directory.Exists(targetPath)) return new List<string>();
 
             try
             {
-                // Debug Ausgabe
-                var files = Directory.GetFiles(path, "*.3dm");
-                RhinoApp.WriteLine($"[RingWizard] {files.Length} Profile in '{path}' gefunden.");
-
+                var files = Directory.GetFiles(targetPath, "*.3dm");
                 return files.Select(Path.GetFileNameWithoutExtension).ToList();
             }
             catch (Exception ex)
             {
-                RhinoApp.WriteLine($"[RingWizard] Fehler beim Lesen der Profile: {ex.Message}");
+                RhinoApp.WriteLine($"Error reading {folderName}: {ex.Message}");
                 return new List<string>();
             }
         }
 
-        public static Curve LoadProfile(string profileName)
+        // Lädt eine Kurve aus dem angegebenen Ordner
+        public static Curve LoadProfile(string profileName, string folderName)
         {
-            if (_curveCache.ContainsKey(profileName))
-                return _curveCache[profileName].DuplicateCurve();
+            string cacheKey = $"{folderName}/{profileName}";
+            if (_curveCache.ContainsKey(cacheKey)) return _curveCache[cacheKey].DuplicateCurve();
 
-            var path = CurvesPath;
-            if (path == null) return null;
+            string root = GetPluginDir();
+            if (root == null) return null;
 
-            string filePath = Path.Combine(path, profileName + ".3dm");
+            string filePath = Path.Combine(root, folderName, profileName + ".3dm");
             if (!File.Exists(filePath)) return null;
 
             try
@@ -83,16 +69,44 @@ namespace NewRhinoGold.Helpers
                     {
                         BoundingBox bbox = c.GetBoundingBox(true);
                         c.Translate(Vector3d.Negate(new Vector3d(bbox.Center)));
-                        _curveCache[profileName] = c;
+                        _curveCache[cacheKey] = c;
                         return c.DuplicateCurve();
                     }
                 }
             }
-            catch
-            {
-                // Ignorieren
-            }
+            catch { }
             return null;
+        }
+
+        // Speichert eine Kurve in den angegebenen Ordner
+        public static bool SaveProfile(string profileName, Curve curve, string folderName)
+        {
+            if (string.IsNullOrWhiteSpace(profileName) || curve == null) return false;
+
+            try
+            {
+                string root = GetPluginDir();
+                if (root == null) return false;
+
+                string targetPath = Path.Combine(root, folderName);
+                if (!Directory.Exists(targetPath)) Directory.CreateDirectory(targetPath);
+
+                string filePath = Path.Combine(targetPath, profileName + ".3dm");
+
+                Curve toSave = curve.DuplicateCurve();
+                BoundingBox bbox = toSave.GetBoundingBox(true);
+                Vector3d move = Point3d.Origin - bbox.Center;
+                toSave.Translate(move);
+
+                var f3dm = new File3dm();
+                f3dm.Objects.AddCurve(toSave);
+                return f3dm.Write(filePath, 7);
+            }
+            catch (Exception ex)
+            {
+                RhinoApp.WriteLine($"Save Error: {ex.Message}");
+                return false;
+            }
         }
     }
 }

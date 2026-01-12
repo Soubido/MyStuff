@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq; // Wichtig für Casts
 using Eto.Drawing;
 using Eto.Forms;
 using Rhino;
@@ -11,7 +12,6 @@ using NewRhinoGold.Helpers;
 
 namespace NewRhinoGold.Studio
 {
-    // KORREKTUR: Erbt von Form für .Show()
     public class CutterStudioDlg : Form
     {
         // --- STATUS ---
@@ -47,27 +47,22 @@ namespace NewRhinoGold.Studio
 
             Content = BuildLayout();
 
-            // Events für Vorschau-Handling
-            // Die Eigenschaft .Enabled kommt direkt aus der Basisklasse DisplayConduit
             Shown += (s, e) => { _previewConduit.Enabled = true; UpdatePreview(); };
             Closed += (s, e) => { _previewConduit.Enabled = false; RhinoDoc.ActiveDoc?.Views.Redraw(); };
         }
 
         private Control BuildLayout()
         {
-            // 1. HEADER AREA
             _btnSelectGems = new Button { Text = "Select Gems", Height = 28 };
             _btnSelectGems.Click += OnSelectGems;
 
             var topLayout = new TableLayout { Padding = new Padding(10, 10, 10, 5), Spacing = new Size(5, 5) };
             topLayout.Rows.Add(new TableRow(_btnSelectGems));
 
-            // 2. TABS AREA
             _tabControl = new TabControl();
             _tabControl.Pages.Add(new TabPage { Text = "Parameters", Content = BuildParamsTab() });
             _tabControl.Pages.Add(new TabPage { Text = "Bottom Shape", Content = BuildShapeTab() });
 
-            // 3. ACTION AREA
             _btnBuild = new Button { Text = "Build Cutters", Height = 28, Font = Eto.Drawing.Fonts.Sans(9, FontStyle.Bold) };
             _btnBuild.Click += OnBuild;
 
@@ -77,7 +72,6 @@ namespace NewRhinoGold.Studio
             var actionsLayout = new TableLayout { Spacing = new Size(5, 0) };
             actionsLayout.Rows.Add(new TableRow(null, _btnClose, _btnBuild));
 
-            // MASTER LAYOUT
             var mainLayout = new TableLayout { Padding = 0, Spacing = new Size(0, 0) };
             mainLayout.Rows.Add(topLayout);
             mainLayout.Rows.Add(new TableRow(_tabControl) { ScaleHeight = true });
@@ -145,13 +139,7 @@ namespace NewRhinoGold.Studio
                 Padding = 10,
                 Spacing = 5,
                 HorizontalContentAlignment = HorizontalAlignment.Stretch,
-                Items = {
-                    grpGlobal,
-                    grpTop,
-                    grpSeat,
-                    grpBot,
-                    new StackLayoutItem(null, true)
-                }
+                Items = { grpGlobal, grpTop, grpSeat, grpBot, new StackLayoutItem(null, true) }
             };
 
             return new Scrollable { Content = finalLayout, Border = BorderType.None };
@@ -170,12 +158,19 @@ namespace NewRhinoGold.Studio
                 AutoSize = true,
                 DataCell = new ImageTextCell
                 {
-                    ImageBinding = Binding.Property<ProfileItem, Image>(x => x.Preview),
-                    TextBinding = Binding.Property<ProfileItem, string>(x => x.Name)
+                    // CHANGE: Nutzt HeadProfileItem (wegen Curves Ordner & String Name)
+                    ImageBinding = Binding.Property<HeadProfileItem, Image>(x => x.Preview),
+                    TextBinding = Binding.Property<HeadProfileItem, string>(x => x.Name)
                 }
             });
-            _gridLibrary.DataStore = ProfileLibrary.Items;
+
+            // CHANGE: Lädt aus HeadProfileLibrary (Curves Ordner)
+            _gridLibrary.DataStore = HeadProfileLibrary.GetProfileItems();
             _gridLibrary.SelectionChanged += (s, e) => UpdatePreview();
+
+            // Default Select
+            var list = (List<HeadProfileItem>)_gridLibrary.DataStore;
+            if (list != null && list.Count > 0) _gridLibrary.SelectRow(0);
 
             _numProfileRot = CreateStepper(0);
 
@@ -200,7 +195,7 @@ namespace NewRhinoGold.Studio
 
             var mainLayout = new TableLayout { Padding = 10, Spacing = new Size(5, 5) };
             mainLayout.Rows.Add(grpMode);
-            mainLayout.Rows.Add(new Label { Text = "Library Selection:", Font = Eto.Drawing.Fonts.Sans(8) });
+            mainLayout.Rows.Add(new Label { Text = "Library Selection (from 'Curves' folder):", Font = Eto.Drawing.Fonts.Sans(8) });
             mainLayout.Rows.Add(new TableRow(_gridLibrary) { ScaleHeight = true });
             mainLayout.Rows.Add(grpRot);
 
@@ -219,8 +214,10 @@ namespace NewRhinoGold.Studio
             p.BottomDiameterScale = _numBotDia.Value;
 
             p.UseCustomProfile = (_rbShapeLibrary.Checked == true);
-            if (p.UseCustomProfile && _gridLibrary.SelectedItem is ProfileItem item)
-                p.ProfileId = item.Id;
+
+            // CHANGE: Map String Name
+            if (p.UseCustomProfile && _gridLibrary.SelectedItem is HeadProfileItem item)
+                p.ProfileName = item.Name;
 
             p.ProfileRotation = _numProfileRot.Value;
             return p;
@@ -280,19 +277,15 @@ namespace NewRhinoGold.Studio
                 var parts = CutterBuilder.CreateCutter(gem, p);
                 if (parts == null) continue;
 
-                var cutterData = new CutterSmartData(p, Guid.Empty); // GemID fehlt im CutterBuilder context oft
+                var cutterData = new CutterSmartData(p, Guid.Empty);
 
-                // LOGIK: Editieren
                 if (_editingObjectId != Guid.Empty)
                 {
-                    // Wir ersetzen das angeklickte Objekt
                     if (parts.Count > 0)
                     {
                         var mainPart = parts[0];
                         mainPart.UserData.Add(cutterData);
                         doc.Objects.Replace(_editingObjectId, mainPart);
-
-                        // Restliche Teile (falls vorhanden) hinzufügen
                         for (int i = 1; i < parts.Count; i++)
                         {
                             var attr = doc.CreateDefaultAttributes();
@@ -306,7 +299,6 @@ namespace NewRhinoGold.Studio
                 }
                 else
                 {
-                    // Neu erstellen
                     foreach (var brep in parts)
                     {
                         var attr = doc.CreateDefaultAttributes();
@@ -318,7 +310,6 @@ namespace NewRhinoGold.Studio
                     }
                 }
             }
-
             doc.EndUndoRecord(sn);
             doc.Views.Redraw();
             Close();
@@ -361,31 +352,40 @@ namespace NewRhinoGold.Studio
             _editingObjectId = objectId;
             _btnBuild.Text = "Update";
 
-            // ... (Rest der Load-Logik wie gehabt) ...
-            // Ruft die interne Logik auf
-            LoadSmartDataInternal(data);
-        }
-
-        // Hilfsmethode (Inhalt der alten LoadSmartData)
-        private void LoadSmartDataInternal(CutterSmartData data)
-        {
             _suspendUpdates = true;
             _numScale.Value = data.GlobalScale;
-            // ... (alle Parameter setzen) ...
+            _numClearance.Value = data.Clearance;
+            _numTopHeight.Value = data.TopHeight;
+            _numTopDia.Value = data.TopDiameterScale;
+            _numSeatPos.Value = data.SeatLevel;
+            _numBotHeight.Value = data.BottomHeight;
+            _numBotDia.Value = data.BottomDiameterScale;
 
-            // Gem finden für Preview (WICHTIG für Cutter Edit!)
-            // CutterSmartData sollte idealerweise die GemID speichern.
-            // Falls data.GemId verfügbar ist:
+            _numProfileRot.Value = data.ProfileRotation;
+            _rbShapeLibrary.Checked = data.UseCustomProfile;
+            _rbShapeRound.Checked = !data.UseCustomProfile;
+
+            // CHANGE: Select by String Name
+            if (data.UseCustomProfile && !string.IsNullOrEmpty(data.ProfileName))
+            {
+                var list = (List<HeadProfileItem>)_gridLibrary.DataStore;
+                if (list != null)
+                {
+                    for (int i = 0; i < list.Count; i++)
+                    {
+                        if (list[i].Name == data.ProfileName) { _gridLibrary.SelectRow(i); break; }
+                    }
+                }
+            }
+
             var doc = RhinoDoc.ActiveDoc;
             if (data.GemId != Guid.Empty)
             {
                 var gemObj = doc.Objects.FindId(data.GemId);
-                // ... GemData extrahieren und in _selectedGems packen ...
-                // Damit OnBuild weiß, wofür der Cutter ist.
                 if (gemObj != null && RhinoGoldHelper.TryGetGemData(gemObj, out Curve c, out Plane pl, out double s))
                 {
                     _selectedGems.Clear();
-                    _selectedGems.Add(new GemSmartData(c, pl, "Unknown", s, "Def", 0)); // Oder korrekte GemData Klasse
+                    _selectedGems.Add(new GemSmartData(c, pl, "Unknown", s, "Def", 0));
                 }
             }
 
@@ -394,13 +394,10 @@ namespace NewRhinoGold.Studio
         }
     }
 
-    // KORREKTUR: Redundante 'Enabled' Property entfernt
     public class CutterPreviewConduit : Rhino.Display.DisplayConduit
     {
         private List<Brep> _breps;
         private System.Drawing.Color _color = System.Drawing.Color.OrangeRed;
-
-        // Enabled ist bereits in der Basisklasse definiert.
 
         public void SetBreps(List<Brep> breps)
         {

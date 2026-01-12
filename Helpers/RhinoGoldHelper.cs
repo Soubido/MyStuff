@@ -17,23 +17,25 @@ namespace NewRhinoGold.Helpers
 
             if (obj == null) return false;
 
+            // 1. Smart Data checken
             if (obj.Geometry.UserData.Find(typeof(GemSmartData)) is GemSmartData smartData)
             {
                 girdleCurve = smartData.BaseCurve?.DuplicateCurve();
                 gemPlane = smartData.GemPlane;
                 gemSize = smartData.GemSize;
 
-                if (girdleCurve != null && gemPlane.IsValid)
-                {
-                    return true;
-                }
+                // Validierung: Wenn SmartData da ist, aber Geometrie verschoben wurde (z.B. Block),
+                // müssen wir sicherstellen, dass die Plane stimmt. 
+                // Bei Blocks ist die UserData oft auf der Instanz.
+                if (girdleCurve != null && gemPlane.IsValid) return true;
             }
 
+            // 2. Plane ermitteln (auch für Blocks)
             bool planeFound = TryGetGemPlane(obj, out gemPlane);
 
+            // 3. UserStrings (Legacy)
             string rgData = obj.Attributes.GetUserString("RG GEM");
-            if (string.IsNullOrEmpty(rgData))
-                rgData = obj.Attributes.GetUserString("RG GEM CUSTOM");
+            if (string.IsNullOrEmpty(rgData)) rgData = obj.Attributes.GetUserString("RG GEM CUSTOM");
 
             if (!string.IsNullOrEmpty(rgData))
             {
@@ -45,7 +47,33 @@ namespace NewRhinoGold.Helpers
                 }
             }
 
-            girdleCurve = ExtractGirdleCurve(obj.Geometry, gemPlane);
+            // 4. Geometrie für Kurven-Extraktion vorbereiten
+            GeometryBase geoToAnalyze = obj.Geometry;
+
+            // SPECIAL HANDLING FÜR BLOCKS (GemCreator)
+            if (obj is InstanceObject iObj)
+            {
+                // Wir müssen die Geometrie INNEN im Block finden und transformieren
+                var def = iObj.InstanceDefinition;
+                if (def != null)
+                {
+                    var objects = def.GetObjects();
+                    // Wir suchen das größte Mesh/Brep im Block
+                    var mainGeoObj = objects
+                        .OrderByDescending(o => GetBoundingBoxVolume(o.Geometry))
+                        .FirstOrDefault();
+
+                    if (mainGeoObj != null)
+                    {
+                        // Geometrie duplizieren und transformieren
+                        geoToAnalyze = mainGeoObj.Geometry.Duplicate();
+                        geoToAnalyze.Transform(iObj.InstanceXform);
+                    }
+                }
+            }
+
+            // 5. Girdle extrahieren
+            girdleCurve = ExtractGirdleCurve(geoToAnalyze, gemPlane);
 
             if (girdleCurve != null)
             {
@@ -74,18 +102,25 @@ namespace NewRhinoGold.Helpers
             return false;
         }
 
+        private static double GetBoundingBoxVolume(GeometryBase geo)
+        {
+            var bbox = geo.GetBoundingBox(true);
+            return bbox.IsValid ? bbox.Volume : 0;
+        }
+
         public static BezelParameters CalculateDefaults(double stoneSize)
         {
             return new BezelParameters
             {
                 Height = stoneSize * 1.2,
-                ThicknessBottom = Math.Max(stoneSize / 4.0, 0.3),
-                ThicknessTop = Math.Max(stoneSize / 5.0, 0.25),
-                ZOffset = stoneSize / 10.0,
-                GemGap = 0.1,
-                CreateCutter = true,
-                SeatDepth = (stoneSize * 1.2) * 0.3,
-                SeatLedge = Math.Max(stoneSize / 4.0, 0.3) * 0.4
+                ThicknessTop = Math.Max(stoneSize / 10.0, 0.6),
+                ThicknessBottom = Math.Max(stoneSize / 10.0, 0.6),
+                Offset = 0.1,
+                ZOffset = 0.0,
+                SeatDepth = (stoneSize * 1.2) * 0.25,
+                SeatLedge = 0.4,
+                Chamfer = 0.0,
+                Bombing = 0.0
             };
         }
 
