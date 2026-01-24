@@ -46,9 +46,34 @@ namespace NewRhinoGold.Core
 
         public override string Description => "Smart Bezel Data";
 
+        // -------------------------------------------------------------
+        // KORREKTUR 1: ZWINGEND ERFORDERLICH ZUM SPEICHERN
+        // -------------------------------------------------------------
+        public override bool ShouldWrite => true;
+
+        // -------------------------------------------------------------
+        // KORREKTUR 2: DEEP COPY FÜR COPY/PASTE SUPPORT
+        // -------------------------------------------------------------
+        protected override void OnDuplicate(UserData source)
+        {
+            if (source is BezelSmartData src)
+            {
+                this.Height = src.Height;
+                this.ThicknessTop = src.ThicknessTop;
+                this.ThicknessBottom = src.ThicknessBottom;
+                this.Offset = src.Offset;
+                this.ZOffset = src.ZOffset;
+                this.SeatDepth = src.SeatDepth;
+                this.SeatLedge = src.SeatLedge;
+                this.Chamfer = src.Chamfer;
+                this.Bombing = src.Bombing;
+                this.GemId = src.GemId;
+                this.GemPlane = src.GemPlane;
+            }
+        }
+
         protected override bool Write(BinaryArchiveWriter archive)
         {
-            // Version 1.1 (Parameter geändert)
             archive.Write3dmChunkVersion(1, 1);
 
             archive.WriteDouble(Height);
@@ -73,14 +98,10 @@ namespace NewRhinoGold.Core
 
             Height = archive.ReadDouble();
             ThicknessTop = archive.ReadDouble();
-            // Abwärtskompatibilität (falls alte Daten geladen werden, die ThicknessBottom nicht hatten)
+
             if (minor >= 1) ThicknessBottom = archive.ReadDouble(); else ThicknessBottom = ThicknessTop;
 
             Offset = archive.ReadDouble();
-
-            // Alte Version hatte evtl. GemGap hier, wir müssen die Reihenfolge beachten
-            // Da wir struct radikal geändert haben, ist Read-Safety schwierig ohne komplexe Logik.
-            // Annahme: Wir starten sauber neu oder lesen V1.1
 
             if (minor >= 1)
             {
@@ -89,12 +110,6 @@ namespace NewRhinoGold.Core
                 SeatLedge = archive.ReadDouble();
                 Chamfer = archive.ReadDouble();
                 Bombing = archive.ReadDouble();
-            }
-            else
-            {
-                // Simple Fallback für V1.0 (nur Height, ThickTop, Offset, Guid, Plane)
-                // Die alten Daten passen nicht mehr 1:1, wir lesen den Rest "leer" oder überspringen
-                // Das ist vereinfacht. In Produktion müsste man alte Felder lesen und verwerfen.
             }
 
             GemId = archive.ReadGuid();

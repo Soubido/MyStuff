@@ -1,5 +1,4 @@
 using System;
-using System.Collections.Generic;
 using Eto.Drawing;
 using Eto.Forms;
 using Rhino;
@@ -44,10 +43,13 @@ namespace NewRhinoGold.BezelStudio
 
         private Brep _tempBezel = null;
 
+        // WICHTIG: Flag verhindert unnötige Neuberechnung beim Laden von Daten
+        private bool _isUpdatingUI = false;
+
         public BezelStudioDlg()
         {
             Title = "Bezel Studio";
-            ClientSize = new Size(250, 380);
+            ClientSize = new Size(250, 420); // Etwas höher für bessere Lesbarkeit
             Topmost = true;
             Resizable = false;
             Padding = new Padding(10);
@@ -58,7 +60,10 @@ namespace NewRhinoGold.BezelStudio
             LoadMaterials();
 
             Shown += (s, e) => _previewConduit.Enable();
-            Closed += (s, e) => { _previewConduit.Disable(); RhinoDoc.ActiveDoc?.Views.Redraw(); };
+            Closed += (s, e) => {
+                _previewConduit.Disable();
+                RhinoDoc.ActiveDoc?.Views.Redraw();
+            };
         }
 
         private Control BuildLayout()
@@ -72,7 +77,6 @@ namespace NewRhinoGold.BezelStudio
             layout.AddRow(null);
 
             layout.AddRow(CreateHeader("Dimensions"));
-            // Label geändert: Height ist wieder editierbar
             layout.AddRow(CreateLabel("Total Height:"), _numHeight);
             layout.AddRow(CreateLabel("Thickness Top:"), _numThickTop);
             layout.AddRow(CreateLabel("Thickness Bottom:"), _numThickBottom);
@@ -113,17 +117,13 @@ namespace NewRhinoGold.BezelStudio
             _btnSelectGem = new Button { Text = "Select Gem" };
             _btnSelectGem.Click += OnSelectGem;
 
-            // CHANGE: Height is editable again
-            _numHeight = CreateStepper(3.0);
-            _numHeight.Enabled = true; // User can edit
-            // _numHeight.BackgroundColor entfernt
-
-            _numThickTop = CreateStepper(0.76);
-            _numThickBottom = CreateStepper(0.76);
+            _numHeight = CreateStepper(3.5);
+            _numThickTop = CreateStepper(0.8);
+            _numThickBottom = CreateStepper(0.8);
             _numOffset = CreateStepper(0.10);
             _numZOffset = CreateStepper(0.00); _numZOffset.MinValue = -100.0;
             _numSeatDepth = CreateStepper(0.66);
-            _numSeatLedge = CreateStepper(0.74);
+            _numSeatLedge = CreateStepper(0.70); // Typischer Standardwert
             _numChamfer = CreateStepper(0.0);
             _numBombing = CreateStepper(0.0);
 
@@ -137,13 +137,14 @@ namespace NewRhinoGold.BezelStudio
             _btnCancel.Click += (s, e) => Close();
         }
 
-        private Label CreateLabel(string text) => new Label { Text = text, VerticalAlignment = VerticalAlignment.Center };
-        private Label CreateHeader(string text) => new Label { Text = text, Font = Eto.Drawing.Fonts.Sans(8, FontStyle.Bold), TextColor = Colors.Gray };
+        private Label CreateLabel(string text) => new Label { Text = text, VerticalAlignment = VerticalAlignment.Center, Font = Eto.Drawing.Fonts.Sans(8) };
+        private Label CreateHeader(string text) => new Label { Text = text, Font = Eto.Drawing.Fonts.Sans(8, FontStyle.Bold), TextColor = Colors.DimGray };
 
         private NumericStepper CreateStepper(double val)
         {
-            var s = new NumericStepper { Value = val, DecimalPlaces = 2, Increment = 0.1 };
-            s.ValueChanged += (sender, e) => UpdatePreview();
+            var s = new NumericStepper { Value = val, DecimalPlaces = 2, Increment = 0.1, Width = 70 };
+            // WICHTIG: Nur updaten, wenn wir nicht gerade Werte laden
+            s.ValueChanged += (sender, e) => { if (!_isUpdatingUI) UpdatePreview(); };
             return s;
         }
 
@@ -152,6 +153,7 @@ namespace NewRhinoGold.BezelStudio
             _comboMaterial.Items.Clear();
             if (Densities.Metals != null)
                 foreach (var metal in Densities.Metals) _comboMaterial.Items.Add(metal.Name);
+
             if (_comboMaterial.Items.Count > 0) _comboMaterial.SelectedIndex = 0;
             OnMaterialChanged(null, null);
         }
@@ -164,14 +166,14 @@ namespace NewRhinoGold.BezelStudio
                 var info = Densities.Get(matName);
                 if (info != null) _bezelColor = info.DisplayColor;
             }
-            UpdatePreview();
+            if (!_isUpdatingUI) UpdatePreview();
         }
 
         private void OnSelectGem(object sender, EventArgs e)
         {
             var go = new GetObject();
             go.SetCommandPrompt("Select Gem");
-            go.GeometryFilter = ObjectType.Brep | ObjectType.Mesh | ObjectType.InstanceReference; // InstanceReference für Blocks
+            go.GeometryFilter = ObjectType.Brep | ObjectType.Mesh | ObjectType.InstanceReference;
             go.EnablePreSelect(true, true);
             Visible = false;
             go.Get();
@@ -188,18 +190,20 @@ namespace NewRhinoGold.BezelStudio
                     _gemCurve = c;
                     _gemPlane = p;
 
-                    // Auto-Calculate Height suggestion (but editable)
+                    // Auto-Höhe vorschlagen, wenn wir noch nicht manuell editieren
                     var bbox = obj.Geometry.GetBoundingBox(p);
                     if (bbox.IsValid)
-                        _numHeight.Value = (bbox.Max.Z - bbox.Min.Z) + 0.3;
-                    else
-                        _numHeight.Value = 3.5;
-
+                    {
+                        bool wasUpdating = _isUpdatingUI;
+                        _isUpdatingUI = true;
+                        _numHeight.Value = (bbox.Max.Z - bbox.Min.Z) + 0.5; // +0.5mm Sicherheit
+                        _isUpdatingUI = wasUpdating;
+                    }
                     UpdatePreview();
                 }
                 else
                 {
-                    MessageBox.Show("Could not extract gem data. If this is a block, ensure it contains valid geometry.", "Error", MessageBoxButtons.OK, MessageBoxType.Error);
+                    MessageBox.Show("Invalid Gem Geometry. Please select a valid Gem.", "Error", MessageBoxButtons.OK, MessageBoxType.Error);
                 }
             }
         }
@@ -221,12 +225,13 @@ namespace NewRhinoGold.BezelStudio
                 Bombing = _numBombing.Value
             };
 
+            // Hier wird der Builder aufgerufen (Stellen Sie sicher, dass BezelBuilder.CreateBezel existiert)
             _tempBezel = BezelBuilder.CreateBezel(_gemCurve, _gemPlane, param);
 
             if (_tempBezel != null)
             {
                 _previewConduit.setbreps(new[] { _tempBezel });
-                _previewConduit.SetColor(System.Drawing.Color.FromArgb(130, _bezelColor.R, _bezelColor.G, _bezelColor.B));
+                _previewConduit.SetColor(System.Drawing.Color.FromArgb(150, _bezelColor.R, _bezelColor.G, _bezelColor.B));
                 RhinoDoc.ActiveDoc.Views.Redraw();
             }
         }
@@ -235,10 +240,27 @@ namespace NewRhinoGold.BezelStudio
         {
             if (_tempBezel == null) return;
             var doc = RhinoDoc.ActiveDoc;
+
+            // 1. SmartData erstellen
+            var smartData = new BezelSmartData(
+                _numHeight.Value, _numThickTop.Value, _numThickBottom.Value,
+                _numOffset.Value, _numZOffset.Value, _numSeatDepth.Value,
+                _numSeatLedge.Value, _numChamfer.Value, _numBombing.Value,
+                _selectedGemId, _gemPlane
+            );
+
+            // 2. Alte UserData entfernen (falls vorhanden) und neue hinzufügen
+            // Das ist wichtig, um saubere Daten zu haben
+            var existingData = _tempBezel.UserData.Find(typeof(BezelSmartData));
+            if (existingData != null) _tempBezel.UserData.Remove(existingData);
+
+            _tempBezel.UserData.Add(smartData);
+
             string undoName = _editingObjectId != Guid.Empty ? "Update Bezel" : "Create Bezel";
             uint undoSn = doc.BeginUndoRecord(undoName);
             try
             {
+                // Attribute vorbereiten
                 var attr = new ObjectAttributes();
                 attr.Name = "SmartBezel";
                 attr.SetUserString("RG BEZEL", "1");
@@ -247,28 +269,31 @@ namespace NewRhinoGold.BezelStudio
                 attr.ObjectColor = _bezelColor;
                 attr.ColorSource = ObjectColorSource.ColorFromObject;
 
-                var smartData = new BezelSmartData(
-                    _numHeight.Value, _numThickTop.Value, _numThickBottom.Value,
-                    _numOffset.Value, _numZOffset.Value, _numSeatDepth.Value,
-                    _numSeatLedge.Value, _numChamfer.Value, _numBombing.Value,
-                    _selectedGemId, _gemPlane
-                );
-
-                _tempBezel.UserData.Add(smartData);
-
                 if (_editingObjectId != Guid.Empty)
                 {
-                    doc.Objects.Replace(_editingObjectId, _tempBezel);
-                    var existingObj = doc.Objects.FindId(_editingObjectId);
-                    if (existingObj != null)
+                    // UPDATE LOGIK
+                    // Replace tauscht Geometrie + UserData aus, behält aber Layer/Farbe des alten Objekts.
+                    if (doc.Objects.Replace(_editingObjectId, _tempBezel))
                     {
-                        existingObj.Attributes.ObjectColor = _bezelColor;
-                        existingObj.Attributes.SetUserString("RG MATERIAL ID", matName);
-                        existingObj.CommitChanges();
+                        // Wir müssen die Attribute des 'alten' (jetzt ersetzten) Objekts aktualisieren,
+                        // falls der User das Material geändert hat.
+                        var obj = doc.Objects.FindId(_editingObjectId);
+                        if (obj != null)
+                        {
+                            obj.Attributes.ObjectColor = _bezelColor;
+                            obj.Attributes.SetUserString("RG MATERIAL ID", matName);
+                            obj.CommitChanges(); // WICHTIG: Änderungen anwenden
+                        }
+                    }
+                    else
+                    {
+                        // Fallback, falls Objekt gelöscht wurde
+                        doc.Objects.AddBrep(_tempBezel, attr);
                     }
                 }
                 else
                 {
+                    // NEU ERSTELLEN
                     doc.Objects.AddBrep(_tempBezel, attr);
                 }
             }
@@ -279,34 +304,70 @@ namespace NewRhinoGold.BezelStudio
             Close();
         }
 
-        public void LoadSmartData(NewRhinoGold.Core.BezelSmartData data, Guid objectId)
+        public void LoadSmartData(BezelSmartData data, Guid objectId)
         {
             if (data == null) return;
             _editingObjectId = objectId;
             _btnOk.Text = "Update";
+            Title = "Edit Bezel";
 
-            _numHeight.Value = data.Height;
-            _numThickTop.Value = data.ThicknessTop;
-            _numThickBottom.Value = data.ThicknessBottom;
-            _numOffset.Value = data.Offset;
-            _numZOffset.Value = data.ZOffset;
-            _numSeatDepth.Value = data.SeatDepth;
-            _numSeatLedge.Value = data.SeatLedge;
-            _numChamfer.Value = data.Chamfer;
-            _numBombing.Value = data.Bombing;
+            // WICHTIG: UI Updates blockieren, damit nicht 10x gerechnet wird
+            _isUpdatingUI = true;
 
-            _selectedGemId = data.GemId;
-            _gemPlane = data.GemPlane;
-
-            var doc = RhinoDoc.ActiveDoc;
-            if (doc != null)
+            try
             {
-                var gemObj = doc.Objects.FindId(data.GemId);
-                if (gemObj != null && NewRhinoGold.Helpers.RhinoGoldHelper.TryGetGemData(gemObj, out Rhino.Geometry.Curve c, out Rhino.Geometry.Plane p, out double s))
+                _numHeight.Value = data.Height;
+                _numThickTop.Value = data.ThicknessTop;
+
+                // Fallback für alte Daten (sicherheitshalber)
+                _numThickBottom.Value = data.ThicknessBottom > 0 ? data.ThicknessBottom : data.ThicknessTop;
+
+                _numOffset.Value = data.Offset;
+                _numZOffset.Value = data.ZOffset;
+                _numSeatDepth.Value = data.SeatDepth;
+                _numSeatLedge.Value = data.SeatLedge;
+                _numChamfer.Value = data.Chamfer;
+                _numBombing.Value = data.Bombing;
+
+                _selectedGemId = data.GemId;
+                _gemPlane = data.GemPlane;
+
+                // Versuch, die Kurve wiederherzustellen
+                var doc = RhinoDoc.ActiveDoc;
+                if (doc != null)
                 {
-                    _gemCurve = c;
+                    var gemObj = doc.Objects.FindId(data.GemId);
+                    if (gemObj != null)
+                    {
+                        if (RhinoGoldHelper.TryGetGemData(gemObj, out Curve c, out Plane p, out double s))
+                        {
+                            _gemCurve = c;
+                            // Optional: Plane aktualisieren, falls der Stein bewegt wurde
+                            // _gemPlane = p; 
+                        }
+                    }
+                }
+
+                // Material auslesen (Attribut UserString)
+                if (doc != null)
+                {
+                    var obj = doc.Objects.FindId(objectId);
+                    if (obj != null)
+                    {
+                        string matId = obj.Attributes.GetUserString("RG MATERIAL ID");
+                        if (!string.IsNullOrEmpty(matId))
+                        {
+                            _comboMaterial.SelectedValue = matId; // Setzt Combo Box
+                        }
+                    }
                 }
             }
+            finally
+            {
+                _isUpdatingUI = false;
+            }
+
+            // Einmalig updaten am Ende
             UpdatePreview();
         }
     }

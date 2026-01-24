@@ -1,4 +1,5 @@
 using System;
+using System.Reflection;
 using Eto.Drawing;
 using Eto.Forms;
 using Rhino;
@@ -6,23 +7,19 @@ using Rhino.UI;
 
 namespace NewRhinoGold.Dialog
 {
-    // WICHTIG: Das ist die Zeile, die Rhino zwingend braucht!
     [System.Runtime.InteropServices.Guid("D93808C6-2313-4315-B667-89735E263888")]
     public class MainToolbarDlg : Panel
     {
-        // Für den Command holen wir die ID sicherheitshalber direkt von der Klasse
         public static Guid PanelId => typeof(MainToolbarDlg).GUID;
 
-        // Fonts explizit über Eto.Drawing.Fonts adressiert, wie gewünscht
         private readonly Eto.Drawing.Font _fontHeader = Eto.Drawing.Fonts.Sans(9, FontStyle.Bold);
         private readonly Eto.Drawing.Font _fontBtn = Eto.Drawing.Fonts.Sans(9);
 
-        private readonly Size _btnSize = new Size(-1, 28);
+        private readonly Size _btnSize = new Size(-1, 32);
         private readonly Padding _padding = new Padding(5);
 
         public MainToolbarDlg()
         {
-            // Konstruktor MUSS parameterlos sein für Rhino Panels
             Content = BuildLayout();
         }
 
@@ -32,47 +29,51 @@ namespace NewRhinoGold.Dialog
 
             layout.BeginVertical();
 
-            // --- SELECTION ---
-            layout.Add(CreateHeader("Selection"));
-            layout.Add(CreateCmdBtn("Select Gems", "_SelGems"));
-            layout.Add(CreateCmdBtn("Select Heads", "_SelHeads"));
-            layout.Add(CreateCmdBtn("Select Bezels", "_SelBezels"));
-            // NEU: Select Cutters hinzugefügt
-            layout.Add(CreateCmdBtn("Select Cutters", "_SelCutters"));
-            layout.Add(null); // Kleiner Abstand
+
 
             // --- CREATION ---
             layout.Add(CreateHeader("Creation"));
-            // NEU: Ring Wizard (ganz oben, da Haupttool)
-            layout.Add(CreateCmdBtn("Ring Wizard", "_RingWizard"));
-            layout.Add(CreateCmdBtn("Gem Studio", "_GemStudio"));
-            layout.Add(CreateCmdBtn("Gem Creator", "_GemCreator"));
-            layout.Add(CreateCmdBtn("Cutter Studio", "_CutterStudio"));
-            layout.Add(CreateCmdBtn("Bezel Studio", "_BezelStudio"));
-            layout.Add(CreateCmdBtn("Head Studio", "_HeadStudio"));
-            layout.Add(CreateCmdBtn("Pave Studio", "_PaveStudio"));
+            // Hier wird jetzt RingWizard.png geladen
+            layout.Add(CreateCmdBtn("Ring Wizard", "_RingWizard", "RingWizard.png"));
+
+            layout.Add(CreateCmdBtn("Gem Studio", "_GemStudio", "GemStudio.png"));
+            layout.Add(CreateCmdBtn("Gem Creator", "_GemCreator", "GemCreator.png"));
+            layout.Add(CreateCmdBtn("Cutter Studio", "_CutterStudio", "CutterStudio.png"));
+
+            // Falls Sie für BezelStudio kein Icon haben, lassen wir es leer oder nutzen ein Platzhalter
+            layout.Add(CreateCmdBtn("Bezel Studio", "_BezelStudio.", "BezelStudio.png"));
+
+            layout.Add(CreateCmdBtn("Head Studio", "_HeadStudio", "HeadStudio.png"));
+            layout.Add(CreateCmdBtn("Pave Studio", "_PaveStudio", "PaveStudio.png"));
             layout.Add(null);
 
             // --- EDIT ---
             layout.Add(CreateHeader("Edit"));
-            layout.Add(CreateCmdBtn("Edit Smart Object", "_EditSmartObject")); // Neuer Befehl
+            layout.Add(CreateCmdBtn("Edit Smart Object", "_EditSmartObject"));
             layout.Add(null);
 
             // --- TOOLS ---
             layout.Add(CreateHeader("Tools"));
-            layout.Add(CreateCmdBtn("Extract Curve", "_ExtractGemCurve"));
-            layout.Add(CreateCmdBtn("Move on Srf", "_MoveOnSurface"));
-            layout.Add(CreateCmdBtn("Engraving Builder", "_EngraveRing"));
+            layout.Add(CreateCmdBtn("Extract Curve", "_ExtractGemCurve", "ExtractGemCrv.png"));
+            layout.Add(CreateCmdBtn("Move on Srf", "_MoveOnSurface", "MoveOnSurface.png"));
+            layout.Add(CreateCmdBtn("Engraving Builder", "_EngraveRing", "EngraveStudio.png"));
             layout.Add(null);
 
             // --- ANALYSIS ---
             layout.Add(CreateHeader("Analysis"));
-            layout.Add(CreateCmdBtn("Gold Weight", "_GoldWeight"));
-            layout.Add(CreateCmdBtn("Gem Report", "_GemReport"));
+            layout.Add(CreateCmdBtn("Gold Weight", "_GoldWeight", "GoldWeight.png"));
+            layout.Add(CreateCmdBtn("Gem Report", "_GemReport", "GemReport.png"));
 
-            // Platzhalter am Ende, damit nicht alles gequetscht wirkt
-            layout.Add(new Eto.Forms.Panel { Height = 10 });
+            // --- SELECTION ---
+            layout.Add(CreateHeader("Selection"));
+            // Hier wird jetzt überall "Selection.png" verwendet, wie gewünscht
+            layout.Add(CreateCmdBtn("Select Gems", "_SelGems", "Selection.png"));
+            layout.Add(CreateCmdBtn("Select Heads", "_SelHeads", "Selection.png"));
+            layout.Add(CreateCmdBtn("Select Bezels", "_SelBezels", "Selection.png"));
+            layout.Add(CreateCmdBtn("Select Cutters", "_SelCutters", "Selection.png"));
+            layout.Add(null);
 
+            layout.Add(new Panel { Height = 10 });
             layout.EndVertical();
 
             return new Scrollable { Content = layout, Border = BorderType.None };
@@ -89,12 +90,50 @@ namespace NewRhinoGold.Dialog
             };
         }
 
-        private Button CreateCmdBtn(string label, string command)
+        private Button CreateCmdBtn(string label, string command, string iconName = null)
         {
-            var btn = new Button { Text = label, Font = _fontBtn, Size = _btnSize };
-            // Führt den Rhino Befehl aus (z.B. "_SelCutters")
+            var btn = new Button
+            {
+                Text = label,
+                Font = _fontBtn,
+                Size = _btnSize
+            };
+
+            if (!string.IsNullOrEmpty(iconName))
+            {
+                var icon = LoadIcon(iconName);
+                if (icon != null)
+                {
+                    btn.Image = icon;
+                    btn.ImagePosition = ButtonImagePosition.Left;
+                }
+            }
+
             btn.Click += (s, e) => RhinoApp.RunScript(command, false);
             return btn;
+        }
+
+        private Image LoadIcon(string name)
+        {
+            try
+            {
+                var assembly = Assembly.GetExecutingAssembly();
+                // Stellen Sie sicher, dass 'NewRhinoGold' Ihr korrekter Namespace ist!
+                string resourceName = $"NewRhinoGold.Icons.{name}";
+
+                using (var stream = assembly.GetManifestResourceStream(resourceName))
+                {
+                    if (stream != null)
+                    {
+                        return new Bitmap(stream);
+                    }
+                }
+            }
+            catch
+            {
+                // Fehlerunterdrückung, falls Icon fehlt
+            }
+            return null;
         }
     }
 }

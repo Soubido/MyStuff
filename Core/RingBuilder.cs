@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using Rhino;
 using Rhino.Geometry;
 
@@ -15,7 +16,6 @@ namespace NewRhinoGold.Core
             // 1. RAIL (Schiene)
             var plane = new Plane(Point3d.Origin, Vector3d.XAxis, Vector3d.ZAxis);
             var circle = new Circle(plane, radiusMM);
-            // Wir rotieren den Startpunkt nach unten (-90°), damit der Seam unten liegt (üblicher für Ringe)
             circle.Rotate(-Math.PI / 2.0, plane.Normal, plane.Origin);
             Curve rail = circle.ToNurbsCurve();
             rail.Domain = new Interval(0, 1.0);
@@ -34,7 +34,26 @@ namespace NewRhinoGold.Core
 
                 Curve shape = slot.BaseCurve.DuplicateCurve();
 
-                // A. SKALIEREN
+                // A. SMART REBUILD
+                // Erhält Ecken, damit später separate Flächen entstehen
+                shape = SmartRebuild(shape);
+                if (shape == null) continue;
+
+                // A.1 ORIENTATION
+                if (shape.ClosedCurveOrientation(Vector3d.ZAxis) == CurveOrientation.Clockwise)
+                    shape.Reverse();
+
+                // A.2 SEAM ALIGNMENT
+                BoundingBox rawBox = shape.GetBoundingBox(true);
+                Point3d targetSeam = new Point3d((rawBox.Min.X + rawBox.Max.X) / 2.0, rawBox.Min.Y, 0);
+
+                double tSeam;
+                if (shape.ClosestPoint(targetSeam, out tSeam))
+                {
+                    shape.ChangeClosedCurveSeam(tSeam);
+                }
+
+                // B. SKALIEREN
                 BoundingBox bbox = shape.GetBoundingBox(true);
                 double currentW = bbox.Max.X - bbox.Min.X;
                 double currentH = bbox.Max.Y - bbox.Min.Y;
@@ -42,25 +61,25 @@ namespace NewRhinoGold.Core
                 if (currentH < 0.001) currentH = 1.0;
                 shape.Transform(Transform.Scale(Plane.WorldXY, slot.Width / currentW, slot.Height / currentH, 1.0));
 
-                // B. ALIGNMENT (Auf Rail setzen)
+                // C. ALIGNMENT
                 bbox = shape.GetBoundingBox(true);
                 double shiftUp = -bbox.Min.Y;
                 shape.Transform(Transform.Translation(0, shiftUp, 0));
 
-                // C. ROTATION
+                // D. ROTATION
                 if (Math.Abs(slot.Rotation) > 0.001)
                 {
                     double rad = slot.Rotation * (Math.PI / 180.0);
                     shape.Rotate(rad, Vector3d.ZAxis, Point3d.Origin);
                 }
 
-                // D. OFFSET Y (Sideways Shift)
+                // E. OFFSET Y
                 if (Math.Abs(slot.OffsetY) > 0.001)
                 {
                     shape.Translate(slot.OffsetY, 0, 0);
                 }
 
-                // E. MAPPING
+                // F. MAPPING
                 Point3d railPoint = rail.PointAt(t);
                 Vector3d radial = railPoint - Point3d.Origin;
                 radial.Unitize();
@@ -75,14 +94,15 @@ namespace NewRhinoGold.Core
             // 3. SWEEP
             var sweep = new SweepOneRail();
             sweep.ClosedSweep = isClosedLoop;
-            // Toleranzen etwas lockern für Sweep, damit er leichter schließt
             sweep.AngleToleranceRadians = 0.02;
-            sweep.SweepTolerance = 0.01;
+            sweep.SweepTolerance = 0.001;
+
+            // HINWEIS: CheckCustomCurveStyle entfernt. 
+            // Die Ecken werden durch die Geometrie der 'SmartRebuild' Kurven definiert.
 
             Brep[] breps = null;
             try { breps = sweep.PerformSweep(rail, sweepShapes, sweepParams); } catch { }
 
-            // Fallback: Wenn ClosedSweep fehlschlägt, versuche es offen
             if ((breps == null || breps.Length == 0) && isClosedLoop)
             {
                 sweep.ClosedSweep = false;
@@ -97,31 +117,22 @@ namespace NewRhinoGold.Core
 
             foreach (var b in breps)
             {
-                // Standardize richtet Knot-Vectors, Faces und Edges aus
                 b.Standardize();
 
-                // Versuch 1: Einfaches Joinen von Naked Edges (für die Naht)
+                // CRITICAL: Zerlegt "Smooth" Surfaces an den Kinks in separate Faces.
+                // Das sorgt dafür, dass Innenfläche, Außenfläche und Seitenwände separate BrepFaces werden.
+                b.Faces.SplitKinkyFaces(RhinoMath.DefaultAngleTolerance, true);
+
                 b.JoinNakedEdges(docTol);
 
                 if (solid && !b.IsSolid)
                 {
                     if (isClosedLoop)
                     {
-                        // Bei Ring: Naht schließen.
-                        // Manchmal ist die Lücke etwas größer als die Toleranz.
                         b.JoinNakedEdges(docTol * 10.0);
-
-                        // Wenn immer noch nicht solid, ist es kaputt oder verdreht
-                        if (!b.IsSolid)
-                        {
-                            // Letzte Rettung: Brep.Join (falls Sweep mehrere Teile ausgespuckt hat, was er bei single rail selten tut)
-                            // Aber hier haben wir nur ein Brep b.
-                            // Wir belassen es dabei und lassen den Validator im Wizard entscheiden.
-                        }
                     }
                     else
                     {
-                        // Bei offener Schiene: Deckflächen (Caps) drauf
                         var capped = b.CapPlanarHoles(docTol);
                         if (capped != null)
                         {
@@ -133,6 +144,51 @@ namespace NewRhinoGold.Core
                 result.Add(b);
             }
             return result.ToArray();
+        }
+
+        private static Curve SmartRebuild(Curve input)
+        {
+            if (input == null) return null;
+
+            var simplified = input.Simplify(CurveSimplifyOptions.All, RhinoDoc.ActiveDoc != null ? RhinoDoc.ActiveDoc.ModelAbsoluteTolerance : 0.001, RhinoMath.DefaultAngleTolerance);
+            if (simplified != null) input = simplified;
+
+            if (!input.GetNextDiscontinuity(Continuity.G1_continuous, input.Domain.Min, input.Domain.Max, out double t))
+            {
+                return input.Rebuild(32, 3, true);
+            }
+
+            Curve[] segments = input.DuplicateSegments();
+            if (segments == null || segments.Length == 0) return input.Rebuild(32, 3, true);
+
+            var newSegments = new List<Curve>();
+            foreach (var seg in segments)
+            {
+                int ptCount = 4;
+                double len = seg.GetLength();
+                if (len > 1.0) ptCount = (int)(len * 4);
+                if (ptCount < 4) ptCount = 4;
+                if (ptCount > 12) ptCount = 12;
+
+                if (!seg.IsLinear(0.001))
+                {
+                    var rebuiltSeg = seg.Rebuild(ptCount, 3, true);
+                    if (rebuiltSeg != null) newSegments.Add(rebuiltSeg);
+                    else newSegments.Add(seg);
+                }
+                else
+                {
+                    newSegments.Add(seg);
+                }
+            }
+
+            Curve[] joined = Curve.JoinCurves(newSegments, 0.01, true);
+            if (joined != null && joined.Length == 1)
+            {
+                return joined[0];
+            }
+
+            return input;
         }
     }
 }

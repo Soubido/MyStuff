@@ -344,32 +344,103 @@ namespace NewRhinoGold.Studio
             if (_selectedGems.Count == 0) return;
             var param = GetParameters();
             var doc = RhinoDoc.ActiveDoc;
+
+            // Undo Record starten
             uint sn = doc.BeginUndoRecord("Create/Update Head");
 
-            foreach (var gem in _selectedGems)
+            try
             {
-                var parts = HeadBuilder.CreateHead(gem.Curve, gem.Plane, param);
-                if (parts != null && parts.Count > 0)
+                foreach (var gem in _selectedGems)
                 {
-                    foreach (var part in parts)
-                    {
-                        if (!part.IsValid) part.Repair(0.001);
-                        if (!part.IsSolid) part.CapPlanarHoles(0.001);
-                    }
+                    // 1. Geometrie erzeugen
+                    var parts = HeadBuilder.CreateHead(gem.Curve, gem.Plane, param);
 
-                    var smartData = new HeadSmartData(param, gem.Id, gem.Plane);
-                    if (_editingObjectId != Guid.Empty)
+                    if (parts != null && parts.Count > 0)
                     {
-                        doc.Objects.Replace(_editingObjectId, parts[0]); parts[0].UserData.Add(smartData);
-                        for (int i = 1; i < parts.Count; i++) { var attr = doc.CreateDefaultAttributes(); attr.Name = "SmartHead"; parts[i].UserData.Add(smartData); doc.Objects.AddBrep(parts[i], attr); }
-                    }
-                    else
-                    {
-                        foreach (var b in parts) { var attr = doc.CreateDefaultAttributes(); attr.Name = "SmartHead"; b.UserData.Add(smartData); doc.Objects.AddBrep(b, attr); }
+                        // Reparatur und Cap
+                        foreach (var part in parts)
+                        {
+                            if (!part.IsValid) part.Repair(doc.ModelAbsoluteTolerance);
+                            // Nur schließen, wenn es keine Rail ist (Rails sind manchmal offen gewollt, hier Annahme solid)
+                            if (!part.IsSolid) part.CapPlanarHoles(doc.ModelAbsoluteTolerance);
+                        }
+
+                        // 2. SmartData vorbereiten
+                        // Wir erzeugen für jedes Brep eine neue Instanz oder (besser) nutzen OnDuplicate beim Add
+                        // Aber hier erstellen wir einfach eines und lassen Rhino kopieren beim Add
+                        var smartDataTemplate = new HeadSmartData(param, gem.Id, gem.Plane);
+
+                        // 3. Lösch-Logik für UPDATE
+                        int groupIndex = -1;
+
+                        if (_editingObjectId != Guid.Empty)
+                        {
+                            // Wir sind im Edit-Modus. Wir müssen das ALTE Zeug löschen.
+                            var oldObj = doc.Objects.FindId(_editingObjectId);
+                            if (oldObj != null)
+                            {
+                                // Prüfen, ob das Objekt Teil einer Gruppe ist
+                                var attrs = oldObj.Attributes;
+                                var groupList = attrs.GetGroupList();
+
+                                if (groupList != null && groupList.Length > 0)
+                                {
+                                    // Wir nehmen die erste Gruppe an
+                                    groupIndex = groupList[0];
+                                    var groupObjects = doc.Objects.FindByGroup(groupIndex);
+
+                                    // Alle Objekte der alten Gruppe löschen
+                                    foreach (var go in groupObjects) doc.Objects.Delete(go, true);
+                                }
+                                else
+                                {
+                                    // Kein Gruppenobjekt, also nur Einzelobjekt löschen
+                                    doc.Objects.Delete(_editingObjectId, true);
+
+                                    // Neue Gruppe anlegen für das neue Objekt
+                                    groupIndex = doc.Groups.Add("SmartHead_Group");
+                                }
+                            }
+                        }
+
+                        // Falls wir keine Gruppe haben (Neu erstellen oder Fallback), neue anlegen
+                        if (groupIndex == -1)
+                        {
+                            groupIndex = doc.Groups.Add("SmartHead_Group");
+                        }
+
+                        // 4. Neue Objekte hinzufügen
+                        foreach (var b in parts)
+                        {
+                            var attr = doc.CreateDefaultAttributes();
+                            attr.Name = "SmartHead";
+                            attr.SetUserString("RG_TYPE", "Head");
+
+                            // Der Gruppe zuweisen
+                            attr.AddToGroup(groupIndex);
+
+                            // UserData hinzufügen (Wichtig: Rhino macht keine automatische DeepCopy beim AddUserData, 
+                            // wenn wir das selbe Objekt verwenden. Daher sicherheitshalber neu instanziieren oder duplizieren,
+                            // falls das Objekt referenziert wird. Hier: Einfachheit halber nutzen wir das Template, 
+                            // Rhino serialisiert es beim Speichern eh separat für jedes Objekt.)
+                            // BESSER: Explizites Duplikat für jedes Teil, um Seiteneffekte im Speicher zu vermeiden.
+                            var dataCopy = new HeadSmartData(param, gem.Id, gem.Plane);
+                            b.UserData.Add(dataCopy);
+
+                            doc.Objects.AddBrep(b, attr);
+                        }
                     }
                 }
             }
-            doc.EndUndoRecord(sn);
+            catch (Exception ex)
+            {
+                MessageBox.Show($"Error building head: {ex.Message}");
+            }
+            finally
+            {
+                doc.EndUndoRecord(sn);
+            }
+
             doc.Views.Redraw();
             Close();
         }

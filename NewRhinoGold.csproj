@@ -17,6 +17,38 @@
 	</PropertyGroup>
 
 	<ItemGroup>
+	  <None Remove="Icons\BezelStudio.png" />
+	  <None Remove="Icons\CutterStudio.png" />
+	  <None Remove="Icons\EngraveStudio.png" />
+	  <None Remove="Icons\ExtractGemCrv.png" />
+	  <None Remove="Icons\GemCreator.png" />
+	  <None Remove="Icons\GemReport.png" />
+	  <None Remove="Icons\GemStudio.png" />
+	  <None Remove="Icons\GoldWeight.png" />
+	  <None Remove="Icons\HeadStudio.png" />
+	  <None Remove="Icons\MoveOnSurface.png" />
+	  <None Remove="Icons\PaveStudio.png" />
+	  <None Remove="Icons\RingWizard.png" />
+	  <None Remove="Icons\Selection.png" />
+	</ItemGroup>
+
+	<ItemGroup>
+	  <EmbeddedResource Include="Icons\BezelStudio.png" />
+	  <EmbeddedResource Include="Icons\CutterStudio.png" />
+	  <EmbeddedResource Include="Icons\EngraveStudio.png" />
+	  <EmbeddedResource Include="Icons\ExtractGemCrv.png" />
+	  <EmbeddedResource Include="Icons\GemCreator.png" />
+	  <EmbeddedResource Include="Icons\GemReport.png" />
+	  <EmbeddedResource Include="Icons\GemStudio.png" />
+	  <EmbeddedResource Include="Icons\GoldWeight.png" />
+	  <EmbeddedResource Include="Icons\HeadStudio.png" />
+	  <EmbeddedResource Include="Icons\MoveOnSurface.png" />
+	  <EmbeddedResource Include="Icons\PaveStudio.png" />
+	  <EmbeddedResource Include="Icons\RingWizard.png" />
+	  <EmbeddedResource Include="Icons\Selection.png" />
+	</ItemGroup>
+
+	<ItemGroup>
 		<PackageReference Include="RhinoCommon" Version="8.0.23304.9001" ExcludeAssets="runtime" />
 	</ItemGroup>
 

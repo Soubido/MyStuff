@@ -11,7 +11,7 @@ namespace NewRhinoGold.Core
     public class HeadSmartData : UserData
     {
         private const int MAJOR = 1;
-        private const int MINOR = 1; // Version erhöht wegen String-Wechsel
+        private const int MINOR = 1;
 
         public Guid GemId { get; set; }
         public Plane GemPlane { get; set; }
@@ -35,7 +35,7 @@ namespace NewRhinoGold.Core
 
         // Rails
         public bool EnableTopRail { get; set; }
-        public string TopRailProfileName { get; set; } // String!
+        public string TopRailProfileName { get; set; }
         public double TopRailWidth { get; set; }
         public double TopRailThickness { get; set; }
         public double TopRailPosition { get; set; }
@@ -43,15 +43,14 @@ namespace NewRhinoGold.Core
         public double TopRailRotation { get; set; }
 
         public bool EnableBottomRail { get; set; }
-        public string BottomRailProfileName { get; set; } // String!
+        public string BottomRailProfileName { get; set; }
         public double BottomRailWidth { get; set; }
         public double BottomRailThickness { get; set; }
         public double BottomRailPosition { get; set; }
         public double BottomRailOffset { get; set; }
         public double BottomRailRotation { get; set; }
 
-        public string ProfileName { get; set; } // String!
-
+        public string ProfileName { get; set; }
         public List<double> ProngPositions { get; set; } = new List<double>();
 
         public HeadSmartData() { }
@@ -91,10 +90,60 @@ namespace NewRhinoGold.Core
             BottomRailRotation = p.BottomRailRotation;
 
             ProfileName = p.ProfileName;
-            ProngPositions = p.ProngPositions ?? new List<double>();
+            ProngPositions = p.ProngPositions != null ? new List<double>(p.ProngPositions) : new List<double>();
         }
 
         public override string Description => "Smart Head Data";
+
+        // ---------------------------------------------------------------------
+        // CRITICAL FIXES START
+        // ---------------------------------------------------------------------
+
+        public override bool ShouldWrite => true;
+
+        protected override void OnDuplicate(UserData source)
+        {
+            if (source is HeadSmartData s)
+            {
+                GemId = s.GemId;
+                GemPlane = s.GemPlane;
+                Height = s.Height;
+                DepthBelowGem = s.DepthBelowGem;
+                GemInside = s.GemInside;
+                ProngCount = s.ProngCount;
+                TopDiameter = s.TopDiameter;
+                MidDiameter = s.MidDiameter;
+                BottomDiameter = s.BottomDiameter;
+                TopOffset = s.TopOffset;
+                MidOffset = s.MidOffset;
+                BottomOffset = s.BottomOffset;
+                TopProfileRotation = s.TopProfileRotation;
+                MidProfileRotation = s.MidProfileRotation;
+                BottomProfileRotation = s.BottomProfileRotation;
+
+                EnableTopRail = s.EnableTopRail;
+                TopRailProfileName = s.TopRailProfileName;
+                TopRailWidth = s.TopRailWidth;
+                TopRailThickness = s.TopRailThickness;
+                TopRailPosition = s.TopRailPosition;
+                TopRailOffset = s.TopRailOffset;
+                TopRailRotation = s.TopRailRotation;
+
+                EnableBottomRail = s.EnableBottomRail;
+                BottomRailProfileName = s.BottomRailProfileName;
+                BottomRailWidth = s.BottomRailWidth;
+                BottomRailThickness = s.BottomRailThickness;
+                BottomRailPosition = s.BottomRailPosition;
+                BottomRailOffset = s.BottomRailOffset;
+                BottomRailRotation = s.BottomRailRotation;
+
+                ProfileName = s.ProfileName;
+                ProngPositions = s.ProngPositions != null ? new List<double>(s.ProngPositions) : new List<double>();
+            }
+        }
+        // ---------------------------------------------------------------------
+        // CRITICAL FIXES END
+        // ---------------------------------------------------------------------
 
         protected override bool Read(BinaryArchiveReader archive)
         {
@@ -117,7 +166,6 @@ namespace NewRhinoGold.Core
             BottomProfileRotation = archive.ReadDouble();
 
             EnableTopRail = archive.ReadBool();
-            // Liest String (ab v1.1) oder Guid (Legacy Fallback wäre hier komplex, wir nehmen String an)
             TopRailProfileName = archive.ReadString();
             TopRailWidth = archive.ReadDouble();
             TopRailThickness = archive.ReadDouble();

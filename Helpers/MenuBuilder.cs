@@ -14,7 +14,7 @@ namespace NewRhinoGold.Helpers
 
             try
             {
-                // 1. Zugriff auf das Rhino-Hauptfenster über Eto (funktioniert immer in Rhino 8)
+                // 1. Zugriff auf das Rhino-Hauptfenster ?ber Eto (funktioniert immer in Rhino 8)
                 var mainWindow = RhinoEtoApp.MainWindow;
                 if (mainWindow == null)
                 {
@@ -22,22 +22,22 @@ namespace NewRhinoGold.Helpers
                     return;
                 }
 
-                // 2. Zugriff auf das Hauptmenü
+                // 2. Zugriff auf das Hauptmen?
                 var mainMenu = mainWindow.Menu;
                 if (mainMenu == null)
                 {
-                    RhinoApp.WriteLine("[BJewel] Fehler: Hauptmenü nicht gefunden.");
+                    RhinoApp.WriteLine("[BJewel] Fehler: Hauptmen? nicht gefunden.");
                     return;
                 }
 
-                // 3. Prüfen, ob "BJewel" schon da ist
+                // 3. Pr?fen, ob "BJewel" schon da ist
                 string menuName = "BJewel";
                 foreach (var item in mainMenu.Items)
                 {
                     if (item.Text == menuName) return; // Schon da
                 }
 
-                // --- 4. Menü bauen ---
+                // --- 4. Men? bauen ---
 
                 var rootMenu = new ButtonMenuItem { Text = menuName };
 
@@ -71,12 +71,12 @@ namespace NewRhinoGold.Helpers
                 // System
                 AddItem(rootMenu, "Show Toolbar", "_RhinoGoldToolbar");
 
-                // --- 5. Menü einfügen ---
-                // Wir fügen es vor dem vorletzten Item ein (meistens vor "Help" oder "Window")
+                // --- 5. Men? einf?gen ---
+                // Wir f?gen es vor dem vorletzten Item ein (meistens vor "Help" oder "Window")
                 int index = Math.Max(0, mainMenu.Items.Count - 2);
                 mainMenu.Items.Insert(index, rootMenu);
 
-                RhinoApp.WriteLine("[BJewel] Menü erfolgreich geladen.");
+                RhinoApp.WriteLine("[BJewel] Men? erfolgreich geladen.");
             }
             catch (Exception ex)
             {
