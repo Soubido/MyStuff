@@ -381,28 +381,73 @@ namespace NewRhinoGold.Dialog
 
         private void OnOk(object sender, EventArgs e)
         {
-            var doc = RhinoDoc.ActiveDoc; if (doc == null || _previewBreps.Count == 0) { Close(); return; }
+            var doc = RhinoDoc.ActiveDoc;
+            if (doc == null || _previewBreps.Count == 0)
+            {
+                Close();
+                return;
+            }
+
             uint undo = doc.BeginUndoRecord("Create Smart Gem");
             try
             {
                 for (int i = 0; i < _previewBreps.Count; i++)
                 {
-                    var brep = _previewBreps[i]; if (brep == null) continue;
-                    var attr = new ObjectAttributes(); attr.Name = "SmartGem";
+                    var brep = _previewBreps[i];
+                    if (brep == null) continue;
+
+                    // 1. Attribute erstellen
+                    var attr = new ObjectAttributes();
+                    attr.Name = "SmartGem";
                     string matName = GetSelectedMaterialName() ?? "Gem";
                     attr.SetUserString("RG MATERIAL ID", matName);
-                    attr.ObjectColor = _gemColor; attr.ColorSource = ObjectColorSource.ColorFromObject;
+                    attr.ObjectColor = _gemColor;
+                    attr.ColorSource = ObjectColorSource.ColorFromObject;
 
-                    Curve originalCurve = null; Plane originalPlane = Plane.WorldXY;
+                    // 2. Originaldaten holen
+                    Curve originalCurve = null;
+                    Plane originalPlane = Plane.WorldXY;
+
                     if (_previewBaseCurves.TryGetValue(i, out Curve cVal)) originalCurve = cVal;
                     if (_previewPlanes.TryGetValue(i, out Plane pVal)) originalPlane = pVal;
 
-                    var smartData = new GemSmartData(originalCurve, originalPlane, "Custom", _currentGemSizeVal, matName, _calculatedCarat);
-                    brep.UserData.Add(smartData);
+                    // 3. SmartData Instanz erstellen
+                    // WICHTIG: "CutType" sollte idealerweise beschreibend sein, z.B. "CustomProfile"
+                    var smartData = new GemSmartData(originalCurve, originalPlane, "CustomProfile", _currentGemSizeVal, matName, _calculatedCarat);
+
+                    // 4. FEHLENDE PARAMETER HINZUFÜGEN (WICHTIG!)
+                    // Wir müssen die Werte zurück in Prozent rechnen, falls sie in mm sind,
+                    // damit die parametrische Logik konsistent bleibt.
+                    bool inPercent = _rbPercent.Checked == true;
+                    double size = _currentGemSizeVal > 0.001 ? _currentGemSizeVal : 1.0;
+
+                    if (inPercent)
+                    {
+                        smartData.TablePercent = _numDInt.Value;
+                        smartData.CrownHeightPercent = _numH1.Value;
+                        smartData.GirdleThicknessPercent = _numH2.Value;
+                        smartData.PavilionHeightPercent = _numH3.Value;
+                    }
+                    else
+                    {
+                        // Umrechnung mm -> % für die Speicherung
+                        smartData.TablePercent = (_numDInt.Value / size) * 100.0;
+                        smartData.CrownHeightPercent = (_numH1.Value / size) * 100.0;
+                        smartData.GirdleThicknessPercent = (_numH2.Value / size) * 100.0;
+                        smartData.PavilionHeightPercent = (_numH3.Value / size) * 100.0;
+                    }
+
+                    // 5. KORREKTUR: Daten an Attribute hängen, nicht an Brep-Geometrie
+                    attr.UserData.Add(smartData);
+
+                    // 6. Objekt ins Dokument einfügen
                     doc.Objects.AddBrep(brep, attr);
                 }
             }
-            finally { doc.EndUndoRecord(undo); }
+            finally
+            {
+                doc.EndUndoRecord(undo);
+            }
             Close();
         }
     }

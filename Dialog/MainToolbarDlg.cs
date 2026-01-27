@@ -41,7 +41,7 @@ namespace NewRhinoGold.Dialog
             layout.Add(CreateCmdBtn("Cutter Studio", "_CutterStudio", "CutterStudio.png"));
 
             // Falls Sie für BezelStudio kein Icon haben, lassen wir es leer oder nutzen ein Platzhalter
-            layout.Add(CreateCmdBtn("Bezel Studio", "_BezelStudio.", "BezelStudio.png"));
+            layout.Add(CreateCmdBtn("Bezel Studio", "_BezelStudio", "BezelStudio.png"));
 
             layout.Add(CreateCmdBtn("Head Studio", "_HeadStudio", "HeadStudio.png"));
             layout.Add(CreateCmdBtn("Pave Studio", "_PaveStudio", "PaveStudio.png"));
@@ -49,7 +49,8 @@ namespace NewRhinoGold.Dialog
 
             // --- EDIT ---
             layout.Add(CreateHeader("Edit"));
-            layout.Add(CreateCmdBtn("Edit Smart Object", "_EditSmartObject"));
+            layout.Add(CreateCmdBtn("Edit Smart Object", "_EditSmartObject", "EditSmartObjekt.png"));
+            layout.Add(CreateCmdBtn("Pick and Place a Gem", "_PickGem", "PickGem.png"));
             layout.Add(null);
 
             // --- TOOLS ---

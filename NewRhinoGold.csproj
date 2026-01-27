@@ -19,6 +19,7 @@
 	<ItemGroup>
 	  <None Remove="Icons\BezelStudio.png" />
 	  <None Remove="Icons\CutterStudio.png" />
+	  <None Remove="Icons\EditSmartObjekt.png" />
 	  <None Remove="Icons\EngraveStudio.png" />
 	  <None Remove="Icons\ExtractGemCrv.png" />
 	  <None Remove="Icons\GemCreator.png" />
@@ -28,6 +29,7 @@
 	  <None Remove="Icons\HeadStudio.png" />
 	  <None Remove="Icons\MoveOnSurface.png" />
 	  <None Remove="Icons\PaveStudio.png" />
+	  <None Remove="Icons\PickGem.png" />
 	  <None Remove="Icons\RingWizard.png" />
 	  <None Remove="Icons\Selection.png" />
 	</ItemGroup>
@@ -44,6 +46,7 @@
 	  <EmbeddedResource Include="Icons\HeadStudio.png" />
 	  <EmbeddedResource Include="Icons\MoveOnSurface.png" />
 	  <EmbeddedResource Include="Icons\PaveStudio.png" />
+	  <EmbeddedResource Include="Icons\PickGem.png" />
 	  <EmbeddedResource Include="Icons\RingWizard.png" />
 	  <EmbeddedResource Include="Icons\Selection.png" />
 	</ItemGroup>
@@ -54,6 +57,10 @@
 
 	<ItemGroup>
 		<PackageReference Include="System.Drawing.Common" Version="7.0.0" />
+	</ItemGroup>
+
+	<ItemGroup>
+	  <EmbeddedResource Include="Icons\EditSmartObjekt.png" />
 	</ItemGroup>
 
 </Project>

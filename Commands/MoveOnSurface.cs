@@ -6,6 +6,7 @@ using Rhino.DocObjects;
 using Rhino.Geometry;
 using Rhino.Input;
 using Rhino.Input.Custom;
+using NewRhinoGold.Core; // WICHTIG: Damit GemSmartData gefunden wird
 
 namespace NewRhinoGold.Commands
 {
@@ -15,7 +16,10 @@ namespace NewRhinoGold.Commands
         public override Guid Id => new Guid("E1F2A3B4-C5D6-4789-0123-456789ABCDEF");
 
         private Surface _lastSurface;
-        private bool _copy; // true = kopieren, false = Original ersetzen
+        private bool _copy;
+
+        // Standard Gap in mm
+        private const double DEFAULT_GAP = 0.2;
 
         protected override Result RunCommand(RhinoDoc doc, RunMode mode)
         {
@@ -28,20 +32,59 @@ namespace NewRhinoGold.Commands
 
             var pickedObjects = new List<RhinoObject>();
             var bbox = BoundingBox.Empty;
+
+            // NEU: Wir bereiten die Vorschau-Daten schon hier vor
+            var previewItems = new List<MovePreviewItem>();
+
             foreach (var r in go.Objects())
             {
                 var ro = r.Object();
                 if (ro == null) continue;
                 pickedObjects.Add(ro);
                 bbox.Union(ro.Geometry.GetBoundingBox(true));
+
+                // --- NEU: SMART DATA CHECK & GAP BERECHNUNG ---
+                GeometryBase mainGeo = ro.Geometry.Duplicate();
+                Curve gapCurve = null;
+
+                // Versuchen, SmartData zu finden
+                var gemData = ro.Attributes.UserData.Find(typeof(GemSmartData)) as GemSmartData;
+
+                if (gemData != null && gemData.BaseCurve != null)
+                {
+                    // 1. Kurve holen (ist dank OnTransform schon an der richtigen Stelle)
+                    var c = gemData.BaseCurve.DuplicateCurve();
+
+                    // 2. Skalierung berechnen für 0.2mm Gap
+                    // Formel: (Size + 2*Gap) / Size
+                    double size = gemData.GemSize;
+                    if (size > 0.001)
+                    {
+                        double scaleFactor = (size + (DEFAULT_GAP * 2)) / size;
+
+                        // Skalieren um das Zentrum der Kurve
+                        var cBox = c.GetBoundingBox(true);
+                        var xformScale = Transform.Scale(cBox.Center, scaleFactor);
+                        c.Transform(xformScale);
+
+                        gapCurve = c;
+                    }
+                }
+
+                previewItems.Add(new MovePreviewItem
+                {
+                    Geometry = mainGeo,
+                    GapCurve = gapCurve
+                });
             }
+
             if (pickedObjects.Count == 0) return Result.Cancel;
 
             // 2. Copy-Option
             var copyToggle = new OptionToggle(_copy, "Nein", "Ja");
             var gopt = new GetOption();
             gopt.SetCommandPrompt("Kopieren?");
-            int idxCopy = gopt.AddOptionToggle("Copy", ref copyToggle);
+            gopt.AddOptionToggle("Copy", ref copyToggle);
             gopt.AcceptNothing(true);
             gopt.Get();
             if (gopt.Result() == GetResult.Option)
@@ -49,14 +92,11 @@ namespace NewRhinoGold.Commands
 
             // 3. Fläche/Face wählen
             var gs = new GetObject { SubObjectSelect = true };
-            gs.SetCommandPrompt(_lastSurface != null
-                ? "Zielfläche wählen (Enter für letzte)"
-                : "Zielfläche wählen");
+            gs.SetCommandPrompt(_lastSurface != null ? "Zielfläche wählen (Enter für letzte)" : "Zielfläche wählen");
             gs.GeometryFilter = ObjectType.Surface | ObjectType.Brep;
             gs.EnablePreSelect(false, true);
             gs.AcceptNothing(true);
 
-            // Filter: Nur Flächen oder Brep-Faces erlauben
             gs.SetCustomGeometryFilter((rhObj, geo, compIndex) =>
             {
                 return geo is Surface || compIndex.ComponentIndexType == ComponentIndexType.BrepFace;
@@ -80,7 +120,6 @@ namespace NewRhinoGold.Commands
                     if (face != null) surface = face.UnderlyingSurface();
                 }
                 if (surface == null) return Result.Failure;
-
                 _lastSurface = surface;
             }
             else
@@ -88,17 +127,29 @@ namespace NewRhinoGold.Commands
                 return Result.Cancel;
             }
 
-            // 4. Punkt auf Fläche wählen (mit Live-Vorschau)
-            var basePoint = bbox.IsValid ? bbox.Center : Point3d.Origin;
+            // Deselektieren für saubere Ansicht
+            doc.Objects.UnselectAll();
+            doc.Views.Redraw();
 
-            var picker = new ObjectOnSurfaceGetter(surface, basePoint, pickedObjects);
-            picker.SetCommandPrompt("Punkt auf Fläche wählen");
+            // 4. ANKERPUNKT BERECHNEN (Abstand halten Logik)
+            var centerPoint = bbox.IsValid ? bbox.Center : Point3d.Origin;
+
+            double u, v;
+            if (!surface.ClosestPoint(centerPoint, out u, out v))
+            {
+                return Result.Failure;
+            }
+            Point3d anchorPoint = surface.PointAt(u, v);
+
+            // 5. GETTER STARTEN (mit den neuen Preview Items)
+            var picker = new ObjectOnSurfaceGetter(surface, anchorPoint, previewItems);
+            picker.SetCommandPrompt("Neuen Punkt auf Fläche wählen");
             picker.AcceptNothing(true);
 
             if (picker.Get() != GetResult.Point)
                 return Result.Cancel;
 
-            // 5. Transformation anwenden
+            // 6. Transformation anwenden
             var xf = picker.CalculatedTransform;
 
             var resultIds = new List<Guid>();
@@ -110,11 +161,13 @@ namespace NewRhinoGold.Commands
                 foreach (var ro in pickedObjects)
                 {
                     var geom = ro.Geometry.Duplicate();
-
-                    // Transformieren (Triggered OnTransform in SmartObjects)
                     if (!geom.Transform(xf)) continue;
 
                     var attrs = ro.Attributes.Duplicate();
+
+                    // WICHTIG: Wenn wir kopieren, müssen wir neue IDs für SmartData vergeben?
+                    // SmartData ist UserData, das wird normalerweise einfach mitkopiert.
+
                     var newId = doc.Objects.Add(geom, attrs);
 
                     if (newId != Guid.Empty)
@@ -133,35 +186,33 @@ namespace NewRhinoGold.Commands
             {
                 foreach (var id in resultIds) doc.Objects.Select(id);
                 doc.Views.Redraw();
-
-                // Gumball aktivieren
                 RhinoApp.RunScript("_Gumball Toggle=On", false);
             }
 
             return Result.Success;
         }
 
-        /// <summary>
-        /// Interne Helper-Klasse für die Vorschau während des Verschiebens.
-        /// </summary>
+        // --- HILFSKLASSE FÜR VORSCHAU-DATEN ---
+        private class MovePreviewItem
+        {
+            public GeometryBase Geometry;
+            public Curve GapCurve; // Kann null sein, wenn kein Gem
+        }
+
+        // --- GETTER KLASSE ---
         private class ObjectOnSurfaceGetter : GetPoint
         {
             private readonly Surface _surface;
-            private readonly Point3d _baseCenter;
-            private readonly List<GeometryBase> _previewGeometries;
+            private readonly Point3d _anchorPoint;
+            private readonly List<MovePreviewItem> _items; // Geändert von GeometryBase zu MovePreviewItem
+
             public Transform CalculatedTransform { get; private set; }
 
-            public ObjectOnSurfaceGetter(Surface surface, Point3d baseCenter, List<RhinoObject> objects)
+            public ObjectOnSurfaceGetter(Surface surface, Point3d anchorPoint, List<MovePreviewItem> items)
             {
                 _surface = surface;
-                _baseCenter = baseCenter;
-                _previewGeometries = new List<GeometryBase>();
-
-                foreach (var obj in objects)
-                {
-                    if (obj.Geometry != null)
-                        _previewGeometries.Add(obj.Geometry.Duplicate());
-                }
+                _anchorPoint = anchorPoint;
+                _items = items;
 
                 Constrain(_surface, false);
             }
@@ -169,28 +220,33 @@ namespace NewRhinoGold.Commands
             protected override void OnMouseMove(GetPointMouseEventArgs e)
             {
                 base.OnMouseMove(e);
-
-                // Berechne Translation vom Original-Zentrum zum aktuellen Mauspunkt
-                var translation = e.Point - _baseCenter;
+                var translation = e.Point - _anchorPoint;
                 CalculatedTransform = Transform.Translation(translation);
             }
 
             protected override void OnDynamicDraw(GetPointDrawEventArgs e)
             {
-                if (CalculatedTransform.IsValid)
+                if (!CalculatedTransform.IsValid) return;
+
+                // Einmal Transformation auf den Stack legen für alle Objekte
+                e.Display.PushModelTransform(CalculatedTransform);
+
+                foreach (var item in _items)
                 {
-                    foreach (var geo in _previewGeometries)
+                    // 1. Geometrie zeichnen (Grau)
+                    if (item.Geometry is Brep b) e.Display.DrawBrepWires(b, System.Drawing.Color.Gray);
+                    else if (item.Geometry is Mesh m) e.Display.DrawMeshWires(m, System.Drawing.Color.Gray);
+                    else if (item.Geometry is Curve c) e.Display.DrawCurve(c, System.Drawing.Color.Gray);
+
+                    // 2. Gap Kurve zeichnen (Cyan), falls vorhanden
+                    if (item.GapCurve != null)
                     {
-                        // Performance: ModelTransform pushen statt Geometrie zu transformieren
-                        e.Display.PushModelTransform(CalculatedTransform);
-
-                        if (geo is Brep b) e.Display.DrawBrepWires(b, System.Drawing.Color.Gray);
-                        else if (geo is Mesh m) e.Display.DrawMeshWires(m, System.Drawing.Color.Gray);
-                        else if (geo is Curve c) e.Display.DrawCurve(c, System.Drawing.Color.Gray);
-
-                        e.Display.PopModelTransform();
+                        e.Display.DrawCurve(item.GapCurve, System.Drawing.Color.Cyan, 2);
                     }
                 }
+
+                e.Display.PopModelTransform();
+
                 base.OnDynamicDraw(e);
             }
         }

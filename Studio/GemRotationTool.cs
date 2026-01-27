@@ -9,71 +9,108 @@ namespace NewRhinoGold.Studio
 {
     public class GemRotationTool : GetPoint
     {
-        private readonly Brep _gemTemplate;
+        private readonly GeometryBase _gemGeo;
         private readonly System.Drawing.Color _color;
-        private readonly Transform _baseTransform; // Position & Normalen-Ausrichtung (aus Schritt 1)
-        private readonly Plane _basePlane; // Die Ebene auf der wir rotieren
-        
+        private readonly Transform _baseTransform;
+        private readonly Plane _basePlane;
+
         private Transform _rotationTransform = Transform.Identity;
-        private Curve _gapCurve; // Optional auch hier anzeigen
+        private Curve _gapCurve;
+        private double _gapScale = 1.0;
+
+        // NEU: Das Zentrum für die Skalierung der Gap-Kurve
+        private readonly Point3d _scalingCenter = Point3d.Origin;
 
         public Transform FinalTransform => _rotationTransform * _baseTransform;
 
+        // --- KONSTRUKTOR 1 (Legacy / GemStudio) ---
+        // Bleibt exakt wie er war -> Kompatibel mit altem Code
         public GemRotationTool(Brep gemTemplate, Transform baseTransform, System.Drawing.Color color, Curve gapCurve = null)
         {
-            _gemTemplate = gemTemplate;
+            _gemGeo = gemTemplate;
             _baseTransform = baseTransform;
             _color = color;
             _gapCurve = gapCurve;
+            _gapScale = 1.0;
+            _scalingCenter = Point3d.Origin; // Standard (egal bei Scale 1.0)
 
-            // Ermittle die Ebene der aktuellen Platzierung
             _basePlane = Plane.WorldXY;
             _basePlane.Transform(_baseTransform);
+            SetupTool();
+        }
 
-            SetCommandPrompt("Rotation bestimmen (Maus bewegen)");
+        // --- KONSTRUKTOR 2 (Neu / PickGem) ---
+        // UPDATE: Nimmt jetzt 'scalingCenter' entgegen
+        public GemRotationTool(GeometryBase gem, Transform baseTransform, Plane rotationBasePlane, Curve gapCurve, double gapScale, Point3d scalingCenter)
+        {
+            _gemGeo = gem;
+            _baseTransform = baseTransform;
+            _color = System.Drawing.Color.Gold;
+            _gapCurve = gapCurve;
+            _gapScale = gapScale;
+            _scalingCenter = scalingCenter; // Hier merken wir uns den Ursprung
+
+            // Wir nehmen die übergebene Plane als Wahrheit für den Drehpunkt
+            _basePlane = rotationBasePlane;
+
+            SetupTool();
+        }
+
+        private void SetupTool()
+        {
+            SetCommandPrompt("Rotation bestimmen (Maus bewegen, Klick zum Setzen)");
             SetBasePoint(_basePlane.Origin, true);
-            
-            // Wir beschränken die Maus auf die Ebene des Steins
             Constrain(_basePlane, false);
         }
 
         protected override void OnMouseMove(GetPointMouseEventArgs e)
         {
             base.OnMouseMove(e);
-
-            // Vektor vom Zentrum zur Maus
             Vector3d vec = e.Point - _basePlane.Origin;
-            if (vec.IsTiny(0.001)) return;
+            if (vec.Length < 0.001) return;
 
-            // Winkel zur X-Achse der BasePlane berechnen
-            // Standard Ausrichtung ist Y-Achse (bei Edelsteinen oft oben).
-            // Wir nehmen an 0 Grad ist "Oben" oder X?
-            // Rhino Standard: X ist 0.
-            
-            // Wir berechnen den Winkel relativ zur X-Achse der lokalen Ebene
             double angle = Vector3d.VectorAngle(_basePlane.XAxis, vec, _basePlane);
-            
-            // Rotation um Z-Achse der Ebene (Normal)
+
+            // Rotation um den exakten Origin der übergebenen Plane
             _rotationTransform = Transform.Rotation(angle, _basePlane.ZAxis, _basePlane.Origin);
         }
 
         protected override void OnDynamicDraw(GetPointDrawEventArgs e)
         {
-            if (_gemTemplate != null)
-            {
-                // Kombinierte Transformation: Erst Basis (Position), dann Rotation
-                Transform total = _rotationTransform * _baseTransform;
+            Transform total = _rotationTransform * _baseTransform;
 
-                e.Display.PushModelTransform(total);
-                e.Display.DrawBrepWires(_gemTemplate, _color, 1);
-                
-                if (_gapCurve != null)
-                {
-                    e.Display.DrawCurve(_gapCurve, System.Drawing.Color.LimeGreen, 2);
-                }
-                
-                e.Display.PopModelTransform();
+            e.Display.PushModelTransform(total);
+
+            if (_gemGeo is Brep b)
+            {
+                e.Display.DrawBrepShaded(b, new DisplayMaterial(_color, 0.5));
+                e.Display.DrawBrepWires(b, _color, 1);
             }
+            else if (_gemGeo is Mesh m)
+            {
+                e.Display.DrawMeshShaded(m, new DisplayMaterial(_color, 0.5));
+                e.Display.DrawMeshWires(m, _color);
+            }
+
+            if (_gapCurve != null)
+            {
+                var dispCrv = _gapCurve.DuplicateCurve();
+
+                // Gap Skalierung
+                if (Math.Abs(_gapScale - 1.0) > 0.001)
+                {
+                    // KORREKTUR: Skalieren um das Source-Zentrum, nicht Welt-Nullpunkt
+                    var scaleXform = Transform.Scale(_scalingCenter, _gapScale);
+                    dispCrv.Transform(scaleXform);
+                }
+
+                e.Display.DrawCurve(dispCrv, System.Drawing.Color.Cyan, 2);
+            }
+
+            e.Display.PopModelTransform();
+
+            e.Display.DrawLine(_basePlane.Origin, e.CurrentPoint, System.Drawing.Color.Gray);
+
             base.OnDynamicDraw(e);
         }
     }

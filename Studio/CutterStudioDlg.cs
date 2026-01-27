@@ -1,6 +1,6 @@
 using System;
 using System.Collections.Generic;
-using System.Linq; // Wichtig für Casts
+using System.Linq;
 using Eto.Drawing;
 using Eto.Forms;
 using Rhino;
@@ -158,17 +158,14 @@ namespace NewRhinoGold.Studio
                 AutoSize = true,
                 DataCell = new ImageTextCell
                 {
-                    // CHANGE: Nutzt HeadProfileItem (wegen Curves Ordner & String Name)
                     ImageBinding = Binding.Property<HeadProfileItem, Image>(x => x.Preview),
                     TextBinding = Binding.Property<HeadProfileItem, string>(x => x.Name)
                 }
             });
 
-            // CHANGE: Lädt aus HeadProfileLibrary (Curves Ordner)
             _gridLibrary.DataStore = HeadProfileLibrary.GetProfileItems();
             _gridLibrary.SelectionChanged += (s, e) => UpdatePreview();
 
-            // Default Select
             var list = (List<HeadProfileItem>)_gridLibrary.DataStore;
             if (list != null && list.Count > 0) _gridLibrary.SelectRow(0);
 
@@ -215,7 +212,6 @@ namespace NewRhinoGold.Studio
 
             p.UseCustomProfile = (_rbShapeLibrary.Checked == true);
 
-            // CHANGE: Map String Name
             if (p.UseCustomProfile && _gridLibrary.SelectedItem is HeadProfileItem item)
                 p.ProfileName = item.Name;
 
@@ -241,20 +237,42 @@ namespace NewRhinoGold.Studio
                         var rhinoObj = objRef.Object();
                         if (rhinoObj == null) continue;
 
-                        var data = rhinoObj.Geometry.UserData.Find(typeof(GemSmartData)) as GemSmartData;
-                        if (data != null)
+                        GemSmartData finalData = null;
+
+                        // 1. Suche in Attributen
+                        finalData = rhinoObj.Attributes.UserData.Find(typeof(GemSmartData)) as GemSmartData;
+
+                        // Fallback: Geometrie
+                        if (finalData == null)
                         {
-                            _selectedGems.Add(data);
+                            finalData = rhinoObj.Geometry.UserData.Find(typeof(GemSmartData)) as GemSmartData;
                         }
-                        else
+
+                        // 2. Fallback: Namens-Check
+                        if (finalData == null)
                         {
-                            if (SelectionHelpers.IsGem(rhinoObj))
+                            string objName = rhinoObj.Attributes.Name ?? "";
+                            if (NewRhinoGold.Helpers.SelectionHelpers.IsGem(rhinoObj) ||
+                                objName.IndexOf("gem", StringComparison.OrdinalIgnoreCase) >= 0)
                             {
                                 if (RhinoGoldHelper.TryGetGemData(rhinoObj, out Curve c, out Plane p, out double s))
                                 {
-                                    _selectedGems.Add(new GemSmartData(c, p, "Unknown", s, "Default", 0));
+                                    finalData = new GemSmartData(c, p, "Reconstructed", s, "Unknown", 0);
                                 }
                             }
+                        }
+
+                        // 3. Daten reparieren (0-Werte)
+                        if (finalData != null)
+                        {
+                            if (finalData.CrownHeightPercent < 0.001 && finalData.PavilionHeightPercent < 0.001)
+                            {
+                                finalData.TablePercent = 55.0;
+                                finalData.CrownHeightPercent = 15.0;
+                                finalData.GirdleThicknessPercent = 3.0;
+                                finalData.PavilionHeightPercent = 43.0;
+                            }
+                            _selectedGems.Add(finalData);
                         }
                     }
                     UpdatePreview();
@@ -264,6 +282,36 @@ namespace NewRhinoGold.Studio
             {
                 this.Visible = true;
             }
+        }
+
+        // -------------------------------------------------------------
+        // KORREGIERTE Hilfsmethode für High-Quality Booleans
+        // -------------------------------------------------------------
+        private Brep EnsureQualityBrep(Brep rawBrep)
+        {
+            if (rawBrep == null) return null;
+
+            // FIX: .Faces einfügen! 
+            // In älteren RhinoCommon-Versionen existiert SplitKinkyFaces nur auf der Face-Liste.
+            rawBrep.Faces.SplitKinkyFaces(RhinoMath.DefaultAngleTolerance, true);
+
+            // 2. Versuchen zu schließen (Falls Löcher vorhanden)
+            if (!rawBrep.IsSolid)
+            {
+                var capped = rawBrep.CapPlanarHoles(RhinoDoc.ActiveDoc.ModelAbsoluteTolerance);
+                if (capped != null) rawBrep = capped;
+            }
+
+            // 3. Normals checken (Müssen nach aussen zeigen für Boolean Difference)
+            if (rawBrep.IsSolid && rawBrep.SolidOrientation == BrepSolidOrientation.Inward)
+            {
+                rawBrep.Flip();
+            }
+
+            // 4. Aufräumen (Koplanare Flächen mergen)
+            rawBrep.MergeCoplanarFaces(RhinoDoc.ActiveDoc.ModelAbsoluteTolerance);
+
+            return rawBrep;
         }
 
         private void OnBuild(object sender, EventArgs e)
@@ -277,28 +325,37 @@ namespace NewRhinoGold.Studio
                 var parts = CutterBuilder.CreateCutter(gem, p);
                 if (parts == null) continue;
 
+                // FIX: Teile reinigen
+                for (int i = 0; i < parts.Count; i++)
+                {
+                    parts[i] = EnsureQualityBrep(parts[i]);
+                }
+                parts.RemoveAll(x => x == null); // Fehlerhafte entfernen
+
+                if (parts.Count == 0) continue;
+
                 var cutterData = new CutterSmartData(p, Guid.Empty);
 
                 if (_editingObjectId != Guid.Empty)
                 {
-                    if (parts.Count > 0)
+                    // Update Mode
+                    var mainPart = parts[0];
+                    mainPart.UserData.Add(cutterData);
+                    doc.Objects.Replace(_editingObjectId, mainPart);
+
+                    for (int i = 1; i < parts.Count; i++)
                     {
-                        var mainPart = parts[0];
-                        mainPart.UserData.Add(cutterData);
-                        doc.Objects.Replace(_editingObjectId, mainPart);
-                        for (int i = 1; i < parts.Count; i++)
-                        {
-                            var attr = doc.CreateDefaultAttributes();
-                            attr.Name = "RG Cutter";
-                            attr.ObjectColor = System.Drawing.Color.OrangeRed;
-                            attr.ColorSource = ObjectColorSource.ColorFromObject;
-                            parts[i].UserData.Add(cutterData);
-                            doc.Objects.AddBrep(parts[i], attr);
-                        }
+                        var attr = doc.CreateDefaultAttributes();
+                        attr.Name = "RG Cutter";
+                        attr.ObjectColor = System.Drawing.Color.OrangeRed;
+                        attr.ColorSource = ObjectColorSource.ColorFromObject;
+                        parts[i].UserData.Add(cutterData);
+                        doc.Objects.AddBrep(parts[i], attr);
                     }
                 }
                 else
                 {
+                    // New Mode
                     foreach (var brep in parts)
                     {
                         var attr = doc.CreateDefaultAttributes();
@@ -332,7 +389,14 @@ namespace NewRhinoGold.Studio
             {
                 var parts = CutterBuilder.CreateCutter(gem, p);
                 if (parts != null)
-                    previewBreps.AddRange(parts);
+                {
+                    // FIX: Auch für Preview reinigen (sieht besser aus)
+                    foreach (var part in parts)
+                    {
+                        var clean = EnsureQualityBrep(part);
+                        if (clean != null) previewBreps.Add(clean);
+                    }
+                }
             }
 
             _previewConduit.SetBreps(previewBreps);
@@ -365,7 +429,6 @@ namespace NewRhinoGold.Studio
             _rbShapeLibrary.Checked = data.UseCustomProfile;
             _rbShapeRound.Checked = !data.UseCustomProfile;
 
-            // CHANGE: Select by String Name
             if (data.UseCustomProfile && !string.IsNullOrEmpty(data.ProfileName))
             {
                 var list = (List<HeadProfileItem>)_gridLibrary.DataStore;
@@ -382,10 +445,15 @@ namespace NewRhinoGold.Studio
             if (data.GemId != Guid.Empty)
             {
                 var gemObj = doc.Objects.FindId(data.GemId);
-                if (gemObj != null && RhinoGoldHelper.TryGetGemData(gemObj, out Curve c, out Plane pl, out double s))
+                if (gemObj != null)
                 {
-                    _selectedGems.Clear();
-                    _selectedGems.Add(new GemSmartData(c, pl, "Unknown", s, "Def", 0));
+                    // Hier nutze ich auch die verbesserte Logik von oben, falls du das willst
+                    // Aber der Einfachheit halber lassen wir deinen Load-Code, da der Select-Button der wichtigere Teil ist.
+                    if (RhinoGoldHelper.TryGetGemData(gemObj, out Curve c, out Plane pl, out double s))
+                    {
+                        _selectedGems.Clear();
+                        _selectedGems.Add(new GemSmartData(c, pl, "Unknown", s, "Def", 0));
+                    }
                 }
             }
 

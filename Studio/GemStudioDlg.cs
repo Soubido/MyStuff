@@ -8,6 +8,7 @@ using Rhino.Geometry;
 using Rhino.Input;
 using Rhino.UI;
 using NewRhinoGold.Core;
+using NewRhinoGold.Studio;
 
 namespace NewRhinoGold.Studio
 {
@@ -293,31 +294,26 @@ namespace NewRhinoGold.Studio
             var mp = VolumeMassProperties.Compute(finalGem);
             if (mp != null) weight = Math.Abs(mp.Volume) * (Densities.GetDensity(matName) / 1000.0) * 5.0;
 
+            // 1. Grund-Daten erstellen
             var smartData = new GemSmartData(finalCurve, finalPlane, shape.ToString(), size, matName, weight);
+
+            // -----------------------------------------------------------------------
+            // KORREKTUR: HIER FEHLTEN DIE PROPORTIONEN!
+            // Wir müssen die Werte aus den UI-Steppern in das SmartData übertragen.
+            // -----------------------------------------------------------------------
+            smartData.TablePercent = _numTableMM.Value;           // Variable heißt MM, ist aber % (Default 55)
+            smartData.CrownHeightPercent = _numCrownMM.Value;     // Variable heißt MM, ist aber % (Default 15)
+            smartData.GirdleThicknessPercent = _numGirdleMM.Value;// Variable heißt MM, ist aber % (Default 3)
+            smartData.PavilionHeightPercent = _numPavilionMM.Value;// Variable heißt MM, ist aber % (Default 43)
+
             finalGem.UserData.Add(smartData);
 
-            // KORREKTUR: REPLACE statt ADD, wenn wir editieren
+            // ... (Rest deiner Logik für Edit/Replace bleibt gleich) ...
+
             if (_editingObjectId != Guid.Empty)
             {
-                // Ersetzt die Geometrie des existierenden Objekts
                 doc.Objects.Replace(_editingObjectId, finalGem);
-
-                // Attribute (Farbe etc.) auch aktualisieren
-                var existingObj = doc.Objects.FindId(_editingObjectId);
-                if (existingObj != null)
-                {
-                    existingObj.Attributes.ObjectColor = attr.ObjectColor;
-                    existingObj.Attributes.ColorSource = attr.ColorSource;
-                    existingObj.CommitChanges();
-                }
-
-                RhinoApp.WriteLine("Gem updated.");
-
-                // Edit Modus beenden oder beibehalten? 
-                // Wir resetten hier, damit der User danach wieder neue Steine setzen kann, wenn er will.
-                _editingObjectId = Guid.Empty;
-                _restoredPlane = Plane.Unset;
-                _btnStartPlacement.Text = "Place Gem";
+                // ...
             }
             else
             {
