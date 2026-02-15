@@ -6,7 +6,7 @@ using Rhino.DocObjects;
 using Rhino.Geometry;
 using Rhino.Input;
 using Rhino.Input.Custom;
-using NewRhinoGold.Core; // WICHTIG: Damit GemSmartData gefunden wird
+using NewRhinoGold.Core;
 
 namespace NewRhinoGold.Commands
 {
@@ -18,7 +18,6 @@ namespace NewRhinoGold.Commands
         private Surface _lastSurface;
         private bool _copy;
 
-        // Standard Gap in mm
         private const double DEFAULT_GAP = 0.2;
 
         protected override Result RunCommand(RhinoDoc doc, RunMode mode)
@@ -32,8 +31,6 @@ namespace NewRhinoGold.Commands
 
             var pickedObjects = new List<RhinoObject>();
             var bbox = BoundingBox.Empty;
-
-            // NEU: Wir bereiten die Vorschau-Daten schon hier vor
             var previewItems = new List<MovePreviewItem>();
 
             foreach (var r in go.Objects())
@@ -43,30 +40,20 @@ namespace NewRhinoGold.Commands
                 pickedObjects.Add(ro);
                 bbox.Union(ro.Geometry.GetBoundingBox(true));
 
-                // --- NEU: SMART DATA CHECK & GAP BERECHNUNG ---
                 GeometryBase mainGeo = ro.Geometry.Duplicate();
                 Curve gapCurve = null;
 
-                // Versuchen, SmartData zu finden
                 var gemData = ro.Attributes.UserData.Find(typeof(GemSmartData)) as GemSmartData;
 
                 if (gemData != null && gemData.BaseCurve != null)
                 {
-                    // 1. Kurve holen (ist dank OnTransform schon an der richtigen Stelle)
                     var c = gemData.BaseCurve.DuplicateCurve();
-
-                    // 2. Skalierung berechnen für 0.2mm Gap
-                    // Formel: (Size + 2*Gap) / Size
                     double size = gemData.GemSize;
                     if (size > 0.001)
                     {
                         double scaleFactor = (size + (DEFAULT_GAP * 2)) / size;
-
-                        // Skalieren um das Zentrum der Kurve
                         var cBox = c.GetBoundingBox(true);
-                        var xformScale = Transform.Scale(cBox.Center, scaleFactor);
-                        c.Transform(xformScale);
-
+                        c.Transform(Transform.Scale(cBox.Center, scaleFactor));
                         gapCurve = c;
                     }
                 }
@@ -92,14 +79,17 @@ namespace NewRhinoGold.Commands
 
             // 3. Fläche/Face wählen
             var gs = new GetObject { SubObjectSelect = true };
-            gs.SetCommandPrompt(_lastSurface != null ? "Zielfläche wählen (Enter für letzte)" : "Zielfläche wählen");
+            gs.SetCommandPrompt(_lastSurface != null
+                ? "Zielfläche wählen (Enter für letzte)"
+                : "Zielfläche wählen");
             gs.GeometryFilter = ObjectType.Surface | ObjectType.Brep;
             gs.EnablePreSelect(false, true);
             gs.AcceptNothing(true);
 
             gs.SetCustomGeometryFilter((rhObj, geo, compIndex) =>
             {
-                return geo is Surface || compIndex.ComponentIndexType == ComponentIndexType.BrepFace;
+                return geo is Surface
+                    || compIndex.ComponentIndexType == ComponentIndexType.BrepFace;
             });
 
             var rs = gs.Get();
@@ -127,31 +117,48 @@ namespace NewRhinoGold.Commands
                 return Result.Cancel;
             }
 
-            // Deselektieren für saubere Ansicht
             doc.Objects.UnselectAll();
             doc.Views.Redraw();
 
-            // 4. ANKERPUNKT BERECHNEN (Abstand halten Logik)
+            // 4. Ankerpunkt berechnen
             var centerPoint = bbox.IsValid ? bbox.Center : Point3d.Origin;
 
             double u, v;
             if (!surface.ClosestPoint(centerPoint, out u, out v))
-            {
                 return Result.Failure;
-            }
-            Point3d anchorPoint = surface.PointAt(u, v);
 
-            // 5. GETTER STARTEN (mit den neuen Preview Items)
-            var picker = new ObjectOnSurfaceGetter(surface, anchorPoint, previewItems);
+            Point3d anchorPoint = surface.PointAt(u, v);
+            Vector3d sourceNormal = surface.NormalAt(u, v);
+            if (!sourceNormal.Unitize())
+                sourceNormal = Vector3d.ZAxis;
+
+            Plane sourcePlane = new Plane(anchorPoint, sourceNormal);
+
+            // 5. Getter starten
+            var picker = new ObjectOnSurfaceGetter(
+                surface, sourcePlane, previewItems);
+
             picker.SetCommandPrompt("Neuen Punkt auf Fläche wählen");
             picker.AcceptNothing(true);
 
-            if (picker.Get() != GetResult.Point)
+            var getResult = picker.Get();
+
+            if (getResult != GetResult.Point)
+            {
+                doc.Views.Redraw();
                 return Result.Cancel;
+            }
 
-            // 6. Transformation anwenden
-            var xf = picker.CalculatedTransform;
+            // 6. Finale Transformation holen
+            var xf = picker.FinalTransform;
 
+            if (!xf.IsValid || xf == Transform.Identity)
+            {
+                RhinoApp.WriteLine("Fehler: Keine gültige Verschiebung.");
+                return Result.Failure;
+            }
+
+            // 7. Anwenden
             var resultIds = new List<Guid>();
             doc.Objects.UnselectAll();
 
@@ -164,10 +171,6 @@ namespace NewRhinoGold.Commands
                     if (!geom.Transform(xf)) continue;
 
                     var attrs = ro.Attributes.Duplicate();
-
-                    // WICHTIG: Wenn wir kopieren, müssen wir neue IDs für SmartData vergeben?
-                    // SmartData ist UserData, das wird normalerweise einfach mitkopiert.
-
                     var newId = doc.Objects.Add(geom, attrs);
 
                     if (newId != Guid.Empty)
@@ -192,62 +195,111 @@ namespace NewRhinoGold.Commands
             return Result.Success;
         }
 
-        // --- HILFSKLASSE FÜR VORSCHAU-DATEN ---
+        // ---------------------------------------------------------------
         private class MovePreviewItem
         {
             public GeometryBase Geometry;
-            public Curve GapCurve; // Kann null sein, wenn kein Gem
+            public Curve GapCurve;
         }
 
-        // --- GETTER KLASSE ---
+        // ---------------------------------------------------------------
         private class ObjectOnSurfaceGetter : GetPoint
         {
             private readonly Surface _surface;
-            private readonly Point3d _anchorPoint;
-            private readonly List<MovePreviewItem> _items; // Geändert von GeometryBase zu MovePreviewItem
+            private readonly Plane _sourcePlane;
+            private readonly List<MovePreviewItem> _items;
 
-            public Transform CalculatedTransform { get; private set; }
+            // Vorschaufarben — gut sichtbar in allen Display-Modi
+            private static readonly System.Drawing.Color PreviewColor =
+                System.Drawing.Color.FromArgb(255, 255, 140, 0);   // Orange
+            private static readonly System.Drawing.Color GapColor =
+                System.Drawing.Color.FromArgb(255, 0, 255, 255);   // Cyan
+            private static readonly System.Drawing.Color PointColor =
+                System.Drawing.Color.FromArgb(255, 255, 255, 0);   // Gelb
+            private const int PreviewThickness = 2;
+            private const int GapThickness = 2;
 
-            public ObjectOnSurfaceGetter(Surface surface, Point3d anchorPoint, List<MovePreviewItem> items)
+            private Transform _xform = Transform.Identity;
+
+            public Transform FinalTransform => _xform;
+
+            public ObjectOnSurfaceGetter(
+                Surface surface,
+                Plane sourcePlane,
+                List<MovePreviewItem> items)
             {
                 _surface = surface;
-                _anchorPoint = anchorPoint;
+                _sourcePlane = sourcePlane;
                 _items = items;
 
-                Constrain(_surface, false);
+                Constrain(surface, false);
+                SetBasePoint(sourcePlane.Origin, true);
             }
 
             protected override void OnMouseMove(GetPointMouseEventArgs e)
             {
                 base.OnMouseMove(e);
-                var translation = e.Point - _anchorPoint;
-                CalculatedTransform = Transform.Translation(translation);
+                ComputeTransform(e.Point);
+            }
+
+            private void ComputeTransform(Point3d pt)
+            {
+                double u, v;
+                if (!_surface.ClosestPoint(pt, out u, out v))
+                    return;
+
+                Point3d sp = _surface.PointAt(u, v);
+                Vector3d n = _surface.NormalAt(u, v);
+                if (!n.Unitize()) return;
+
+                Plane targetPlane = new Plane(sp, n);
+                _xform = Transform.PlaneToPlane(_sourcePlane, targetPlane);
             }
 
             protected override void OnDynamicDraw(GetPointDrawEventArgs e)
             {
-                if (!CalculatedTransform.IsValid) return;
+                ComputeTransform(e.CurrentPoint);
 
-                // Einmal Transformation auf den Stack legen für alle Objekte
-                e.Display.PushModelTransform(CalculatedTransform);
-
-                foreach (var item in _items)
+                for (int i = 0; i < _items.Count; i++)
                 {
-                    // 1. Geometrie zeichnen (Grau)
-                    if (item.Geometry is Brep b) e.Display.DrawBrepWires(b, System.Drawing.Color.Gray);
-                    else if (item.Geometry is Mesh m) e.Display.DrawMeshWires(m, System.Drawing.Color.Gray);
-                    else if (item.Geometry is Curve c) e.Display.DrawCurve(c, System.Drawing.Color.Gray);
+                    var item = _items[i];
+                    if (item.Geometry == null) continue;
 
-                    // 2. Gap Kurve zeichnen (Cyan), falls vorhanden
+                    // Transformierte Kopie erstellen
+                    var geo = item.Geometry.Duplicate();
+                    geo.Transform(_xform);
+
+                    // Zeichnen in Orange (Dicke 2) — sichtbar auf jeder Oberfläche
+                    if (geo is Brep brep)
+                    {
+                        e.Display.DrawBrepWires(brep, PreviewColor, PreviewThickness);
+                    }
+                    else if (geo is Extrusion ext)
+                    {
+                        var extBrep = ext.ToBrep();
+                        if (extBrep != null)
+                            e.Display.DrawBrepWires(extBrep, PreviewColor, PreviewThickness);
+                    }
+                    else if (geo is Mesh mesh)
+                    {
+                        e.Display.DrawMeshWires(mesh, PreviewColor, PreviewThickness);
+                    }
+                    else if (geo is Curve crv)
+                    {
+                        e.Display.DrawCurve(crv, PreviewColor, PreviewThickness);
+                    }
+
+                    // Gap-Kurve in Cyan
                     if (item.GapCurve != null)
                     {
-                        e.Display.DrawCurve(item.GapCurve, System.Drawing.Color.Cyan, 2);
+                        var gap = item.GapCurve.DuplicateCurve();
+                        gap.Transform(_xform);
+                        e.Display.DrawCurve(gap, GapColor, GapThickness);
                     }
                 }
 
-                e.Display.PopModelTransform();
-
-                base.OnDynamicDraw(e);
+                // Zielpunkt
+                e.Display.DrawPoint(e.CurrentPoint, PointColor);
             }
         }
     }
