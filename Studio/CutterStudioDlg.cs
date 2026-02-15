@@ -23,6 +23,9 @@ namespace NewRhinoGold.Studio
         // --- UI CONTROLS ---
         private Button _btnSelectGems, _btnBuild, _btnClose;
 
+        // FIX: Hier hat die Variable gefehlt!
+        private Button _btnFlipZ;
+
         // Parameter
         private NumericStepper _numScale, _numClearance;
         private NumericStepper _numTopHeight, _numTopDia;
@@ -39,7 +42,7 @@ namespace NewRhinoGold.Studio
         public CutterStudioDlg()
         {
             Title = "Cutter Studio";
-            ClientSize = new Size(380, 450);
+            ClientSize = new Size(380, 480); // Etwas höher für den neuen Button
             Topmost = true;
             Resizable = false;
 
@@ -171,6 +174,10 @@ namespace NewRhinoGold.Studio
 
             _numProfileRot = CreateStepper(0);
 
+            // FIX: Button initialisieren
+            _btnFlipZ = new Button { Text = "Flip Direction (Z)", Height = 24 };
+            _btnFlipZ.Click += OnFlipZ;
+
             void UpdateEnabled()
             {
                 _gridLibrary.Enabled = (_rbShapeLibrary.Checked == true);
@@ -187,7 +194,11 @@ namespace NewRhinoGold.Studio
 
             var grpRot = new GroupBox { Text = "Adjustments", Padding = 5, Font = Eto.Drawing.Fonts.Sans(8, FontStyle.Bold) };
             var rotLayout = new TableLayout { Spacing = new Size(5, 5) };
-            rotLayout.Rows.Add(new TableRow(new Label { Text = "Rotation:", VerticalAlignment = VerticalAlignment.Center, Font = Eto.Drawing.Fonts.Sans(8) }, _numProfileRot, null));
+            rotLayout.Rows.Add(new TableRow(new Label { Text = "Rotation:", VerticalAlignment = VerticalAlignment.Center, Font = Eto.Drawing.Fonts.Sans(8) }, _numProfileRot));
+
+            // FIX: Button zum Layout hinzufügen
+            rotLayout.Rows.Add(new TableRow(_btnFlipZ));
+
             grpRot.Content = rotLayout;
 
             var mainLayout = new TableLayout { Padding = 10, Spacing = new Size(5, 5) };
@@ -217,6 +228,22 @@ namespace NewRhinoGold.Studio
 
             p.ProfileRotation = _numProfileRot.Value;
             return p;
+        }
+
+        // --- EVENTS ---
+
+        // NEU: Der Flip Event Handler
+        private void OnFlipZ(object sender, EventArgs e)
+        {
+            if (_selectedGems.Count == 0) return;
+
+            foreach (var gemData in _selectedGems)
+            {
+                var p = gemData.GemPlane;
+                p.Flip();
+                gemData.GemPlane = p;
+            }
+            UpdatePreview();
         }
 
         private void OnSelectGems(object sender, EventArgs e)
@@ -284,31 +311,29 @@ namespace NewRhinoGold.Studio
             }
         }
 
-        // -------------------------------------------------------------
-        // KORREGIERTE Hilfsmethode für High-Quality Booleans
-        // -------------------------------------------------------------
+        // --- HELPERS ---
+
         private Brep EnsureQualityBrep(Brep rawBrep)
         {
             if (rawBrep == null) return null;
 
-            // FIX: .Faces einfügen! 
-            // In älteren RhinoCommon-Versionen existiert SplitKinkyFaces nur auf der Face-Liste.
+            // FIX: .Faces.SplitKinkyFaces statt .SplitKinkyFaces
             rawBrep.Faces.SplitKinkyFaces(RhinoMath.DefaultAngleTolerance, true);
 
-            // 2. Versuchen zu schließen (Falls Löcher vorhanden)
+            // Versuchen zu schließen
             if (!rawBrep.IsSolid)
             {
                 var capped = rawBrep.CapPlanarHoles(RhinoDoc.ActiveDoc.ModelAbsoluteTolerance);
                 if (capped != null) rawBrep = capped;
             }
 
-            // 3. Normals checken (Müssen nach aussen zeigen für Boolean Difference)
+            // Normals checken
             if (rawBrep.IsSolid && rawBrep.SolidOrientation == BrepSolidOrientation.Inward)
             {
                 rawBrep.Flip();
             }
 
-            // 4. Aufräumen (Koplanare Flächen mergen)
+            // Aufräumen
             rawBrep.MergeCoplanarFaces(RhinoDoc.ActiveDoc.ModelAbsoluteTolerance);
 
             return rawBrep;
@@ -325,12 +350,12 @@ namespace NewRhinoGold.Studio
                 var parts = CutterBuilder.CreateCutter(gem, p);
                 if (parts == null) continue;
 
-                // FIX: Teile reinigen
+                // Bereinigen für Booleans
                 for (int i = 0; i < parts.Count; i++)
                 {
                     parts[i] = EnsureQualityBrep(parts[i]);
                 }
-                parts.RemoveAll(x => x == null); // Fehlerhafte entfernen
+                parts.RemoveAll(x => x == null);
 
                 if (parts.Count == 0) continue;
 
@@ -390,7 +415,6 @@ namespace NewRhinoGold.Studio
                 var parts = CutterBuilder.CreateCutter(gem, p);
                 if (parts != null)
                 {
-                    // FIX: Auch für Preview reinigen (sieht besser aus)
                     foreach (var part in parts)
                     {
                         var clean = EnsureQualityBrep(part);
@@ -447,8 +471,6 @@ namespace NewRhinoGold.Studio
                 var gemObj = doc.Objects.FindId(data.GemId);
                 if (gemObj != null)
                 {
-                    // Hier nutze ich auch die verbesserte Logik von oben, falls du das willst
-                    // Aber der Einfachheit halber lassen wir deinen Load-Code, da der Select-Button der wichtigere Teil ist.
                     if (RhinoGoldHelper.TryGetGemData(gemObj, out Curve c, out Plane pl, out double s))
                     {
                         _selectedGems.Clear();
