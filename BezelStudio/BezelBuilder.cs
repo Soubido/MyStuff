@@ -12,155 +12,224 @@ namespace NewRhinoGold.BezelStudio
         {
             if (gemCurve == null || !gemCurve.IsValid) return null;
 
-            // Vorbereitung: Kurve auf Plane projizieren
-            Curve baseCurve = gemCurve.DuplicateCurve();
-            if (!baseCurve.IsPlanar()) baseCurve = Curve.ProjectToPlane(baseCurve, plane);
-
             double tol = 0.001;
 
-            // --- 1. PROFIL GENERIERUNG ---
+            // --- 1. LOKALISIERUNG (TRANSFORM TO WORLD ZERO) ---
+            // Wir definieren eine Mapping-Transformation von der Stein-Plane zur Welt-XY-Plane.
+            // Dadurch wird der Stein mathematisch "gerade hingelegt" auf 0,0,0.
+            Transform xformToWorld = Transform.PlaneToPlane(plane, Plane.WorldXY);
+            Transform xformToLoc = Transform.PlaneToPlane(Plane.WorldXY, plane);
 
-            // A. Innenkurve (Kontakt zum Stein + Offset)
-            Curve cGap = OffsetCurveRobust(baseCurve, plane, p.Offset);
-            if (cGap == null) return null; // Offset fehlgeschlagen
+            // Kurve in den Ursprung transformieren
+            Curve crvLocal = gemCurve.DuplicateCurve();
+            crvLocal.Transform(xformToWorld);
+
+            // Plane ist jetzt WorldXY
+            Plane planeLocal = Plane.WorldXY;
+
+            // Sicherstellen, dass die Kurve flach ist (Project to WorldXY)
+            if (!crvLocal.IsPlanar()) crvLocal = Curve.ProjectToPlane(crvLocal, planeLocal);
+            if (!crvLocal.IsClosed) crvLocal.MakeClosed(tol);
+
+            // --- 2. RICHTUNGS-NORMALISIERUNG ---
+            // Im Welt-Ursprung MUSS die Kurve Counter-Clockwise sein, 
+            // damit Offset positiv nach außen geht.
+            CurveOrientation orientation = crvLocal.ClosedCurveOrientation(planeLocal);
+            if (orientation == CurveOrientation.Clockwise)
+            {
+                crvLocal.Reverse();
+            }
+
+            // Seam optimieren (weg von Ecken für saubere Lofts)
+            SimplifySeam(ref crvLocal);
+
+            // --- 3. PROFIL GENERIERUNG (LOKAL) ---
+
+            // A. Innenkurve (Gap)
+            Curve cGap = OffsetCurveRobust(crvLocal, planeLocal, p.Offset);
+            if (cGap == null) return null;
 
             // B. Außenkurve Oben
-            Curve cOuterTopBase = OffsetCurveRobust(cGap, plane, p.ThicknessTop);
-            if (cOuterTopBase == null) cOuterTopBase = cGap.DuplicateCurve(); // Fallback
+            Curve cOuterTopBase = OffsetCurveRobust(cGap, planeLocal, p.ThicknessTop);
+            if (cOuterTopBase == null) cOuterTopBase = cGap.DuplicateCurve();
 
-            // C. Außenkurve Unten (Tapering)
-            // Chamfer verringert den Radius unten.
-            Curve cOuterBottomBase = OffsetCurveRobust(cOuterTopBase, plane, -p.Chamfer);
-            if (cOuterBottomBase == null) cOuterBottomBase = cOuterTopBase.DuplicateCurve(); // Fallback
+            // C. Außenkurve Unten (Chamfer/Tapering)
+            Curve cOuterBottomBase = OffsetCurveRobust(cOuterTopBase, planeLocal, -p.Chamfer);
+            if (cOuterBottomBase == null) cOuterBottomBase = cOuterTopBase.DuplicateCurve();
 
-            // Positionierung in Z
-            // Top liegt bei +SeatDepth
-            // Bottom liegt bei +SeatDepth - Height
-            double zTop = p.SeatDepth;
-            double zBottom = p.SeatDepth - p.Height;
-
-            Curve cOuterTop = cOuterTopBase.DuplicateCurve();
-            cOuterTop.Translate(plane.ZAxis * zTop);
-
-            Curve cOuterBottom = cOuterBottomBase.DuplicateCurve();
-            cOuterBottom.Translate(plane.ZAxis * zBottom);
-
-            // D. Innenkurve Oben (Identisch mit Gap, aber auf Höhe zTop)
-            Curve cInnerTop = cGap.DuplicateCurve();
-            cInnerTop.Translate(plane.ZAxis * zTop);
-
-            // E. Innenkurve Unten (Dicke unten abziehen)
-            Curve cInnerBottom = OffsetCurveRobust(cOuterBottom, plane, -p.ThicknessBottom);
-            if (cInnerBottom == null)
+            // D. Seat Inner (Auflage)
+            Curve cSeatInnerBase = OffsetCurveRobust(cGap, planeLocal, -p.SeatLedge);
+            if (cSeatInnerBase == null)
             {
-                // Fallback: Skalieren, falls Offset fehlschlägt
-                cInnerBottom = cOuterBottom.DuplicateCurve();
-                cInnerBottom.Scale(0.9);
+                cSeatInnerBase = OffsetCurveRobust(cGap, planeLocal, -0.1);
+                if (cSeatInnerBase == null) cSeatInnerBase = cGap.DuplicateCurve();
             }
 
-            // F. Seat Inner (Auflagekante)
-            // Definiert durch Gap - SeatLedge
-            Curve cSeatInner = OffsetCurveRobust(cGap, plane, -p.SeatLedge);
-            if (cSeatInner == null)
+            // E. Innenkurve Unten
+            Curve cInnerBottomBase = OffsetCurveRobust(cOuterBottomBase, planeLocal, -p.ThicknessBottom);
+            if (cInnerBottomBase == null)
             {
-                // Wenn Ledge zu breit für den Stein ist, machen wir ein minimales Loch
-                cSeatInner = OffsetCurveRobust(cGap, plane, -0.1);
-                if (cSeatInner == null) cSeatInner = cGap.DuplicateCurve();
+                cInnerBottomBase = cOuterBottomBase.DuplicateCurve();
+                // Skalierung ist jetzt trivial, da wir im Ursprung sind
+                cInnerBottomBase.Transform(Transform.Scale(Point3d.Origin, 0.9));
             }
 
-            // G. Bombing (Mittelprofil)
-            Curve cOuterMid = null;
+            // F. Bombing (Wölbung)
+            Curve cOuterMidBase = null;
             if (Math.Abs(p.Bombing) > 0.001)
             {
-                double zMid = (zTop + zBottom) / 2.0;
-                Curve midBase = TweenCurve(cOuterTopBase, cOuterBottomBase, 0.5);
-                if (midBase != null)
+                Curve midTween = TweenCurve(cOuterTopBase, cOuterBottomBase, 0.5);
+                if (midTween != null)
                 {
-                    cOuterMid = OffsetCurveRobust(midBase, plane, p.Bombing);
-                    if (cOuterMid != null) cOuterMid.Translate(plane.ZAxis * zMid);
+                    cOuterMidBase = OffsetCurveRobust(midTween, planeLocal, p.Bombing);
                 }
             }
 
-            // --- 2. FLÄCHEN (LOFTS) ---
+            // --- 4. Z-AUFBAU (LOKAL) ---
+
+            double zTop = p.SeatDepth;
+            double zBottom = p.SeatDepth - p.Height;
+            double zMid = (zTop + zBottom) / 2.0;
+            Vector3d zAxis = planeLocal.ZAxis; // Ist jetzt einfach (0,0,1)
+
+            // Kurven positionieren
+            Curve cOuterTop = cOuterTopBase.DuplicateCurve();
+            cOuterTop.Translate(zAxis * zTop);
+
+            Curve cOuterBottom = cOuterBottomBase.DuplicateCurve();
+            cOuterBottom.Translate(zAxis * zBottom);
+
+            Curve cInnerTop = cGap.DuplicateCurve();
+            cInnerTop.Translate(zAxis * zTop);
+
+            Curve cGapCrv = cGap.DuplicateCurve(); // Z=0
+
+            Curve cSeatInner = cSeatInnerBase.DuplicateCurve(); // Z=0
+
+            Curve cInnerBottom = cInnerBottomBase.DuplicateCurve();
+            cInnerBottom.Translate(zAxis * zBottom);
+
+            Curve cOuterMid = null;
+            if (cOuterMidBase != null)
+            {
+                cOuterMid = cOuterMidBase.DuplicateCurve();
+                cOuterMid.Translate(zAxis * zMid);
+            }
+
+            // --- 5. LOFTS ERSTELLEN ---
             List<Brep> parts = new List<Brep>();
 
-            // 1. Außenwand
-            List<Curve> outerProfiles = new List<Curve> { cOuterTop };
+            // 1. Outer Wall
+            var outerProfiles = new List<Curve> { cOuterTop };
             if (cOuterMid != null) outerProfiles.Add(cOuterMid);
             outerProfiles.Add(cOuterBottom);
-            var outerWall = Brep.CreateFromLoft(outerProfiles, Point3d.Unset, Point3d.Unset, LoftType.Normal, false);
-            if (AddIfValid(parts, outerWall)) { }
+            AlignCurves(outerProfiles);
+            AddIfValid(parts, Brep.CreateFromLoft(outerProfiles, Point3d.Unset, Point3d.Unset, LoftType.Normal, false));
 
-            // 2. Rand Oben (Rim)
-            var topRim = Brep.CreateFromLoft(new[] { cOuterTop, cInnerTop }, Point3d.Unset, Point3d.Unset, LoftType.Straight, false);
-            AddIfValid(parts, topRim);
+            // 2. Top Rim
+            var rimProfiles = new List<Curve> { cOuterTop, cInnerTop };
+            AlignCurves(rimProfiles);
+            AddIfValid(parts, Brep.CreateFromLoft(rimProfiles, Point3d.Unset, Point3d.Unset, LoftType.Straight, false));
 
-            // 3. Fassrand Innen (Bezel Wall)
-            var upperInnerWall = Brep.CreateFromLoft(new[] { cInnerTop, cGap }, Point3d.Unset, Point3d.Unset, LoftType.Straight, false);
-            AddIfValid(parts, upperInnerWall);
+            // 3. Inner Wall (Top)
+            var innerWallProfiles = new List<Curve> { cInnerTop, cGapCrv };
+            AlignCurves(innerWallProfiles);
+            AddIfValid(parts, Brep.CreateFromLoft(innerWallProfiles, Point3d.Unset, Point3d.Unset, LoftType.Straight, false));
 
-            // 4. Auflage (Seat) - Planar
-            var seatShelf = Brep.CreateFromLoft(new[] { cGap, cSeatInner }, Point3d.Unset, Point3d.Unset, LoftType.Straight, false);
-            AddIfValid(parts, seatShelf);
+            // 4. Seat Shelf
+            var seatProfiles = new List<Curve> { cGapCrv, cSeatInner };
+            AlignCurves(seatProfiles);
+            AddIfValid(parts, Brep.CreateFromLoft(seatProfiles, Point3d.Unset, Point3d.Unset, LoftType.Straight, false));
 
-            // 5. Innenwand Unten (Under Bezel)
-            var lowerInnerWall = Brep.CreateFromLoft(new[] { cSeatInner, cInnerBottom }, Point3d.Unset, Point3d.Unset, LoftType.Straight, false);
-            AddIfValid(parts, lowerInnerWall);
+            // 5. Under Bezel Inner Wall
+            var underBezelProfiles = new List<Curve> { cSeatInner, cInnerBottom };
+            AlignCurves(underBezelProfiles);
+            AddIfValid(parts, Brep.CreateFromLoft(underBezelProfiles, Point3d.Unset, Point3d.Unset, LoftType.Straight, false));
 
-            // 6. Rand Unten
-            var bottomRim = Brep.CreateFromLoft(new[] { cOuterBottom, cInnerBottom }, Point3d.Unset, Point3d.Unset, LoftType.Straight, false);
-            AddIfValid(parts, bottomRim);
+            // 6. Bottom Rim
+            var bottomRimProfiles = new List<Curve> { cOuterBottom, cInnerBottom };
+            AlignCurves(bottomRimProfiles);
+            AddIfValid(parts, Brep.CreateFromLoft(bottomRimProfiles, Point3d.Unset, Point3d.Unset, LoftType.Straight, false));
 
-            // --- 3. JOIN & CAP ---
+            // --- 6. JOIN & CAP (LOKAL) ---
+            Brep finalBezel = null;
             Brep[] joined = Brep.JoinBreps(parts, tol);
-            if (joined == null || joined.Length == 0) return null;
 
-            Brep finalBezel = joined.OrderByDescending(b => b.GetArea()).FirstOrDefault();
+            if (joined != null && joined.Length > 0)
+            {
+                finalBezel = joined.OrderByDescending(b => b.GetArea()).FirstOrDefault();
+                if (finalBezel != null && !finalBezel.IsSolid)
+                {
+                    finalBezel = finalBezel.CapPlanarHoles(tol);
+                }
+            }
             if (finalBezel == null) return null;
 
-            if (!finalBezel.IsSolid) finalBezel = finalBezel.CapPlanarHoles(tol);
+            // --- 7. CUTTER (LOKAL) ---
 
-
-            // --- 4. CUTTER (Boolean Difference für Pavillon) ---
-            // "Cutter sollte immer aktiv sein" -> Wir schneiden Platz für den Steinbauch
-
-            // Cutter Oben: Startet an der SeatInner Kante
             Curve cutterTop = cSeatInner.DuplicateCurve();
-            cutterTop.Translate(plane.ZAxis * 0.01); // Minimal hoch, damit boolean sauber schneidet
+            cutterTop.Translate(zAxis * 0.01);
 
-            // Cutter Unten: Spitze tief unten
             Curve cutterBottom = cSeatInner.DuplicateCurve();
-            cutterBottom.Translate(plane.ZAxis * (zBottom - 2.0)); // unterhalb der Zarge
-            cutterBottom.Scale(0.01); // Spitze
+            cutterBottom.Translate(zAxis * (zBottom - 2.0));
+            cutterBottom.Transform(Transform.Scale(Point3d.Origin, 0.01)); // Origin ist hier sicher (0,0,0)
 
-            var cutterLoft = Brep.CreateFromLoft(new[] { cutterTop, cutterBottom }, Point3d.Unset, Point3d.Unset, LoftType.Normal, false);
+            var cutterProfiles = new List<Curve> { cutterTop, cutterBottom };
+            AlignCurves(cutterProfiles);
+
+            var cutterLoft = Brep.CreateFromLoft(cutterProfiles, Point3d.Unset, Point3d.Unset, LoftType.Normal, false);
             if (cutterLoft != null && cutterLoft.Length > 0)
             {
                 Brep cutterBrep = cutterLoft[0].CapPlanarHoles(tol);
                 if (cutterBrep != null)
                 {
+                    if (cutterBrep.SolidOrientation == BrepSolidOrientation.Inward) cutterBrep.Flip();
                     Brep[] diff = Brep.CreateBooleanDifference(new[] { finalBezel }, new[] { cutterBrep }, tol);
-                    if (diff != null && diff.Length > 0)
-                    {
-                        finalBezel = diff[0];
-                    }
+                    if (diff != null && diff.Length > 0) finalBezel = diff[0];
                 }
             }
 
-            // --- 5. Z-OFFSET ---
+            // --- 8. Z-OFFSET (LOKAL) ---
             if (Math.Abs(p.ZOffset) > 0.001)
             {
-                finalBezel.Translate(plane.ZAxis * p.ZOffset);
+                finalBezel.Translate(zAxis * p.ZOffset);
             }
+
+            // --- 9. RÜCKTRANSFORMATION (GLOBAL) ---
+            // Das fertige Objekt wird nun an die echte Position im Raum geschickt.
+            finalBezel.Transform(xformToLoc);
 
             return finalBezel;
         }
 
         // --- HELPER ---
 
+        private static void SimplifySeam(ref Curve crv)
+        {
+            if (crv == null) return;
+            if (crv.TangentAtStart.EpsilonEquals(crv.TangentAtEnd, 0.1)) return;
+            double tMid = (crv.Domain.Min + crv.Domain.Max) / 2.0;
+            crv.ChangeClosedCurveSeam(tMid);
+        }
+
+        private static void AlignCurves(List<Curve> curves)
+        {
+            if (curves == null || curves.Count < 2) return;
+            for (int i = 1; i < curves.Count; i++)
+            {
+                if (!Curve.DoDirectionsMatch(curves[0], curves[i])) curves[i].Reverse();
+            }
+            double t0 = curves[0].Domain.Min;
+            Point3d startPt = curves[0].PointAtStart;
+            for (int i = 1; i < curves.Count; i++)
+            {
+                if (curves[i].ClosestPoint(startPt, out double t)) curves[i].ChangeClosedCurveSeam(t);
+            }
+        }
+
         private static bool AddIfValid(List<Brep> list, Brep[] breps)
         {
-            if (breps != null && breps.Length > 0)
+            if (breps != null && breps.Length > 0 && breps[0] != null)
             {
                 list.Add(breps[0]);
                 return true;
@@ -168,32 +237,29 @@ namespace NewRhinoGold.BezelStudio
             return false;
         }
 
-        // Robuster Offset, der bei "Null"-Ergebnis (wegen Sharp corners) Round versucht
         private static Curve OffsetCurveRobust(Curve crv, Plane plane, double dist)
         {
             if (Math.Abs(dist) < 0.001) return crv.DuplicateCurve();
-
-            // Versuch 1: Sharp (Ideal für Schmuck)
             var offsets = crv.Offset(plane, dist, 0.001, CurveOffsetCornerStyle.Sharp);
-
-            // Check ob Valid
-            if (offsets != null && offsets.Length > 0) return offsets[0];
-
-            // Versuch 2: Round (Fallback, löst das "0.7 Gap Problem" bei komplexen Formen)
+            if (IsValidOffset(offsets)) return offsets[0];
             offsets = crv.Offset(plane, dist, 0.001, CurveOffsetCornerStyle.Round);
-            if (offsets != null && offsets.Length > 0) return offsets[0];
-
-            // Versuch 3: Smooth (Letzter Ausweg)
+            if (IsValidOffset(offsets)) return offsets[0];
             offsets = crv.Offset(plane, dist, 0.001, CurveOffsetCornerStyle.Smooth);
-            if (offsets != null && offsets.Length > 0) return offsets[0];
-
+            if (IsValidOffset(offsets)) return offsets[0];
             return null;
+        }
+
+        private static bool IsValidOffset(Curve[] offsets)
+        {
+            return offsets != null && offsets.Length > 0 && offsets[0] != null && offsets[0].IsValid && offsets[0].IsClosed;
         }
 
         private static Curve TweenCurve(Curve c1, Curve c2, double factor)
         {
             if (c1 == null || c2 == null) return null;
-            var loft = Brep.CreateFromLoft(new[] { c1, c2 }, Point3d.Unset, Point3d.Unset, LoftType.Straight, false);
+            var list = new List<Curve> { c1, c2 };
+            AlignCurves(list);
+            var loft = Brep.CreateFromLoft(list, Point3d.Unset, Point3d.Unset, LoftType.Straight, false);
             if (loft != null && loft.Length > 0)
             {
                 var face = loft[0].Faces[0];
