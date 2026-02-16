@@ -22,20 +22,17 @@ namespace NewRhinoGold.BezelStudio
 
             // A. Innenkurve (Kontakt zum Stein + Offset)
             Curve cGap = OffsetCurveRobust(baseCurve, plane, p.Offset);
-            if (cGap == null) return null; // Offset fehlgeschlagen
+            if (cGap == null) return null;
 
             // B. Außenkurve Oben
             Curve cOuterTopBase = OffsetCurveRobust(cGap, plane, p.ThicknessTop);
-            if (cOuterTopBase == null) cOuterTopBase = cGap.DuplicateCurve(); // Fallback
+            if (cOuterTopBase == null) cOuterTopBase = cGap.DuplicateCurve();
 
             // C. Außenkurve Unten (Tapering)
-            // Chamfer verringert den Radius unten.
             Curve cOuterBottomBase = OffsetCurveRobust(cOuterTopBase, plane, -p.Chamfer);
-            if (cOuterBottomBase == null) cOuterBottomBase = cOuterTopBase.DuplicateCurve(); // Fallback
+            if (cOuterBottomBase == null) cOuterBottomBase = cOuterTopBase.DuplicateCurve();
 
             // Positionierung in Z
-            // Top liegt bei +SeatDepth
-            // Bottom liegt bei +SeatDepth - Height
             double zTop = p.SeatDepth;
             double zBottom = p.SeatDepth - p.Height;
 
@@ -45,25 +42,22 @@ namespace NewRhinoGold.BezelStudio
             Curve cOuterBottom = cOuterBottomBase.DuplicateCurve();
             cOuterBottom.Translate(plane.ZAxis * zBottom);
 
-            // D. Innenkurve Oben (Identisch mit Gap, aber auf Höhe zTop)
+            // D. Innenkurve Oben
             Curve cInnerTop = cGap.DuplicateCurve();
             cInnerTop.Translate(plane.ZAxis * zTop);
 
-            // E. Innenkurve Unten (Dicke unten abziehen)
+            // E. Innenkurve Unten
             Curve cInnerBottom = OffsetCurveRobust(cOuterBottom, plane, -p.ThicknessBottom);
             if (cInnerBottom == null)
             {
-                // Fallback: Skalieren, falls Offset fehlschlägt
                 cInnerBottom = cOuterBottom.DuplicateCurve();
                 cInnerBottom.Scale(0.9);
             }
 
             // F. Seat Inner (Auflagekante)
-            // Definiert durch Gap - SeatLedge
             Curve cSeatInner = OffsetCurveRobust(cGap, plane, -p.SeatLedge);
             if (cSeatInner == null)
             {
-                // Wenn Ledge zu breit für den Stein ist, machen wir ein minimales Loch
                 cSeatInner = OffsetCurveRobust(cGap, plane, -0.1);
                 if (cSeatInner == null) cSeatInner = cGap.DuplicateCurve();
             }
@@ -81,23 +75,14 @@ namespace NewRhinoGold.BezelStudio
                 }
             }
 
-            // --- SEAM-ANPASSUNG ---
-            // Alle geschlossenen Kurven auf dieselbe Seam-Position und Richtung bringen,
-            // damit Lofts sauber joinen und keine verdrehten Flächen entstehen.
-            Curve[] allCurves = new[] { cOuterTop, cOuterBottom, cInnerTop, cInnerBottom, cGap, cSeatInner, cOuterMid };
-            AlignCurveSeams(allCurves, baseCurve, tol);
-
             // --- 2. FLÄCHEN (LOFTS) ---
             List<Brep> parts = new List<Brep>();
 
-            // 1. Außenwand
-            // LoftType.Straight für konsistente Kanten mit den angrenzenden Rim-Flächen.
-            // Bei Bombing: Zusätzliche Zwischenprofile erzeugen statt LoftType.Normal,
-            // damit die Endkanten exakt auf den Profilen liegen.
+            // 1. Außenwand — LoftType.Straight für konsistente Kanten mit Rim-Flächen
             List<Curve> outerProfiles = new List<Curve> { cOuterTop };
             if (cOuterMid != null)
             {
-                // Mit Bombing: Zwischenprofile für glatten Verlauf bei LoftType.Straight
+                // Zwischenprofile für glatten Verlauf bei Straight-Loft
                 Curve midTop = TweenCurve(cOuterTop, cOuterMid, 0.5);
                 if (midTop != null) outerProfiles.Add(midTop);
                 outerProfiles.Add(cOuterMid);
@@ -116,7 +101,7 @@ namespace NewRhinoGold.BezelStudio
             var upperInnerWall = Brep.CreateFromLoft(new[] { cInnerTop, cGap }, Point3d.Unset, Point3d.Unset, LoftType.Straight, false);
             AddIfValid(parts, upperInnerWall);
 
-            // 4. Auflage (Seat) - Planar
+            // 4. Auflage (Seat)
             var seatShelf = Brep.CreateFromLoft(new[] { cGap, cSeatInner }, Point3d.Unset, Point3d.Unset, LoftType.Straight, false);
             AddIfValid(parts, seatShelf);
 
@@ -135,34 +120,35 @@ namespace NewRhinoGold.BezelStudio
             Brep finalBezel = joined.OrderByDescending(b => b.GetArea()).FirstOrDefault();
             if (finalBezel == null) return null;
 
+            // CapPlanarHoles — NICHT überschreiben wenn null zurückkommt
             if (!finalBezel.IsSolid)
             {
-                finalBezel = finalBezel.CapPlanarHoles(tol);
-                // Zweiter Versuch mit höherer Toleranz, falls planare Caps nicht greifen
-                if (finalBezel != null && !finalBezel.IsSolid)
-                    finalBezel = finalBezel.CapPlanarHoles(tol * 10);
+                var capped = finalBezel.CapPlanarHoles(tol);
+                if (capped != null)
+                    finalBezel = capped;
+                else
+                {
+                    // Zweiter Versuch mit höherer Toleranz
+                    capped = finalBezel.CapPlanarHoles(tol * 10);
+                    if (capped != null) finalBezel = capped;
+                }
             }
 
-            if (finalBezel == null || !finalBezel.IsValid) return null;
-
             // --- 4. CUTTER (Boolean Difference für Pavillon) ---
-            // "Cutter sollte immer aktiv sein" -> Wir schneiden Platz für den Steinbauch
             try
             {
-                // Cutter Oben: Startet an der SeatInner Kante
                 Curve cutterTop = cSeatInner.DuplicateCurve();
-                cutterTop.Translate(plane.ZAxis * 0.01); // Minimal hoch, damit boolean sauber schneidet
+                cutterTop.Translate(plane.ZAxis * 0.01);
 
-                // Cutter Unten: Spitze tief unten
                 Curve cutterBottom = cSeatInner.DuplicateCurve();
-                cutterBottom.Translate(plane.ZAxis * (zBottom - 2.0)); // unterhalb der Zarge
-                cutterBottom.Scale(0.01); // Spitze
+                cutterBottom.Translate(plane.ZAxis * (zBottom - 2.0));
+                cutterBottom.Scale(0.01);
 
-                var cutterLoft = Brep.CreateFromLoft(new[] { cutterTop, cutterBottom }, Point3d.Unset, Point3d.Unset, LoftType.Straight, false);
+                var cutterLoft = Brep.CreateFromLoft(new[] { cutterTop, cutterBottom }, Point3d.Unset, Point3d.Unset, LoftType.Normal, false);
                 if (cutterLoft != null && cutterLoft.Length > 0)
                 {
                     Brep cutterBrep = cutterLoft[0].CapPlanarHoles(tol);
-                    if (cutterBrep != null && cutterBrep.IsValid && cutterBrep.IsSolid)
+                    if (cutterBrep != null && cutterBrep.IsValid)
                     {
                         Brep[] diff = Brep.CreateBooleanDifference(new[] { finalBezel }, new[] { cutterBrep }, tol);
                         if (diff != null && diff.Length > 0 && diff[0].IsValid)
@@ -183,10 +169,7 @@ namespace NewRhinoGold.BezelStudio
                 finalBezel.Translate(plane.ZAxis * p.ZOffset);
             }
 
-            // --- 6. FINALE VALIDIERUNG ---
-            if (!finalBezel.IsValid) finalBezel.Repair(tol);
-
-            return finalBezel.IsValid ? finalBezel : null;
+            return finalBezel;
         }
 
         // --- HELPER ---
@@ -203,7 +186,7 @@ namespace NewRhinoGold.BezelStudio
 
         /// <summary>
         /// Robuster Offset: Bei Mehrfach-Fragmenten werden alle Segmente gejoint.
-        /// Fallback-Kette: Sharp → Round → Smooth.
+        /// Fallback-Kette: Sharp → Round → Smooth → Original (offene Kurve akzeptiert).
         /// </summary>
         private static Curve OffsetCurveRobust(Curve crv, Plane plane, double dist)
         {
@@ -215,16 +198,18 @@ namespace NewRhinoGold.BezelStudio
                 CurveOffsetCornerStyle.Smooth
             };
 
+            Curve bestFallback = null;
+
             foreach (var style in styles)
             {
                 var offsets = crv.Offset(plane, dist, 0.001, style);
                 if (offsets == null || offsets.Length == 0) continue;
 
-                // Einzelnes Segment — direkt zurückgeben wenn geschlossen und valide
+                // Einzelnes geschlossenes Segment — Idealfall
                 if (offsets.Length == 1 && offsets[0].IsClosed && offsets[0].IsValid)
                     return offsets[0];
 
-                // Mehrere Segmente — joinen zu einer geschlossenen Kurve
+                // Mehrere Segmente — joinen
                 if (offsets.Length > 1)
                 {
                     Curve joined = JoinOffsetFragments(offsets);
@@ -232,21 +217,28 @@ namespace NewRhinoGold.BezelStudio
                         return joined;
                 }
 
-                // Einzelnes, aber offenes Segment — schließen versuchen
-                if (offsets.Length == 1 && !offsets[0].IsClosed && offsets[0].IsValid)
+                // Bestes offenes Segment merken (als Fallback)
+                if (bestFallback == null && offsets.Length >= 1 && offsets[0].IsValid)
+                    bestFallback = offsets[0];
+            }
+
+            // Letzter Fallback: offene Kurve akzeptieren und schließen versuchen
+            if (bestFallback != null)
+            {
+                if (!bestFallback.IsClosed)
                 {
-                    var nc = offsets[0].ToNurbsCurve();
+                    var nc = bestFallback.ToNurbsCurve();
                     if (nc != null)
                     {
-                        // Gap zwischen Start und Ende prüfen
                         double gap = nc.PointAtStart.DistanceTo(nc.PointAtEnd);
-                        if (gap < 0.1) // Kleiner Gap → Schließen erlaubt
+                        if (gap < 0.5)
                         {
                             nc.SetEndPoint(nc.PointAtStart);
-                            if (nc.IsClosed && nc.IsValid) return nc;
+                            if (nc.IsClosed) return nc;
                         }
                     }
                 }
+                return bestFallback;
             }
 
             return null;
@@ -275,7 +267,7 @@ namespace NewRhinoGold.BezelStudio
             }
             if (best != null) return best;
 
-            // Keine geschlossene Kurve — längste offene Kurve schließen
+            // Keine geschlossene Kurve — längste Kurve schließen versuchen
             best = joined.OrderByDescending(c => c.GetLength()).First();
             if (!best.IsClosed)
             {
@@ -283,47 +275,15 @@ namespace NewRhinoGold.BezelStudio
                 if (nc != null)
                 {
                     double gap = nc.PointAtStart.DistanceTo(nc.PointAtEnd);
-                    if (gap < 0.1)
+                    if (gap < 0.5)
                     {
                         nc.SetEndPoint(nc.PointAtStart);
-                        if (nc.IsClosed && nc.IsValid) return nc;
+                        if (nc.IsClosed) return nc;
                     }
                 }
             }
 
             return best.IsValid ? best : null;
-        }
-
-        /// <summary>
-        /// Gleicht Seam-Positionen und Kurvenrichtungen aller geschlossenen Kurven an.
-        /// Referenz ist die Basiskurve des Steins.
-        /// </summary>
-        private static void AlignCurveSeams(Curve[] curves, Curve reference, double tol)
-        {
-            if (reference == null || !reference.IsClosed) return;
-
-            // Referenz-Seam-Punkt
-            Point3d seamPt = reference.PointAtStart;
-
-            foreach (var crv in curves)
-            {
-                if (crv == null || !crv.IsClosed) continue;
-
-                // Richtung angleichen (CounterClockwise prüfen über Fläche)
-                var area1 = AreaMassProperties.Compute(reference);
-                var area2 = AreaMassProperties.Compute(crv);
-                if (area1 != null && area2 != null)
-                {
-                    // Wenn Vorzeichen der Flächen unterschiedlich → Richtung umkehren
-                    bool refCCW = area1.Area > 0;
-                    bool crvCCW = area2.Area > 0;
-                    if (refCCW != crvCCW) crv.Reverse();
-                }
-
-                // Seam zum nächsten Punkt zur Referenz-Seam-Position verschieben
-                crv.ClosestPoint(seamPt, out double t);
-                crv.ChangeClosedCurveSeam(t);
-            }
         }
 
         private static Curve TweenCurve(Curve c1, Curve c2, double factor)
