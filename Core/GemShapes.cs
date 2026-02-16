@@ -79,16 +79,16 @@ namespace NewRhinoGold.Core
                     break;
 
                 case ShapeType.Pear:
-                    // KORREKTUR: Erstellung über Unit-Shape Methode
+                    // KORREKTUR: Erstellung ï¿½ber Unit-Shape Methode
                     var pearCurve = CreateUnitPear();
-                    // Skalieren auf gewünschte Maße
+                    // Skalieren auf gewï¿½nschte Maï¿½e
                     Transform scalePear = Transform.Scale(Plane.WorldXY, width, length, 1.0);
                     pearCurve.Transform(scalePear);
                     result = pearCurve;
                     break;
 
                 case ShapeType.Heart:
-                    // Optimierte Herzform über Kontrollpunkte
+                    // Optimierte Herzform ï¿½ber Kontrollpunkte
                     var heartCurve = CreateUnitHeart();
                     Transform scaleHeart = Transform.Scale(Plane.WorldXY, width, length, 1.0);
                     heartCurve.Transform(scaleHeart);
@@ -104,7 +104,7 @@ namespace NewRhinoGold.Core
             {
                 if (!result.IsClosed) result.MakeClosed(RhinoMath.ZeroTolerance);
 
-                // Seam Reset für sauberes Sweeping
+                // Seam Reset fï¿½r sauberes Sweeping
                 if (type == ShapeType.Round || type == ShapeType.Oval || type == ShapeType.Pear || type == ShapeType.Heart)
                 {
                     result.ChangeClosedCurveSeam(result.Domain.Min);
@@ -118,64 +118,118 @@ namespace NewRhinoGold.Core
         }
 
         /// <summary>
-        /// Erstellt eine normierte Tropfenform (Pear) in 1x1 Box.
+        /// Erstellt eine normierte Tropfenform (Pear) in 1Ã—1 Box.
+        /// Komplett als EINE geschlossene periodische Grad-3 NurbsCurve â€”
+        /// kein Mirror, kein Join, keine Naht-Probleme.
+        /// Ãœberall mindestens G2 (innere Knoten), damit Offset() sauber funktioniert.
         /// </summary>
         private static Curve CreateUnitPear()
         {
-            // Spitze oben (0, 0.5), Boden unten (0, -0.5)
-            Point3d pTip = new Point3d(0, 0.5, 0);
-            Point3d pBottom = new Point3d(0, -0.5, 0);
+            // Kontrollpunkte: volle Kontur, Start = Boden-Mitte.
+            // Symmetrie wird manuell sichergestellt (rechts/links gespiegelte X-Werte).
+            //
+            //          Spitze (0, 0.50)
+            //         /                \
+            //   Schulter               Schulter
+            //      |                      |
+            //    Bauch (breiteste)       Bauch
+            //      |                      |
+            //   Flanke                 Flanke
+            //         \                /
+            //          Boden (0, -0.50)
+            //
+            var pts = new Point3d[]
+            {
+                new Point3d( 0.00, -0.50, 0),    //  0  Boden Mitte
+                new Point3d( 0.30, -0.50, 0),    //  1  Boden rechts
+                new Point3d( 0.48, -0.35, 0),    //  2  Flanke rechts
+                new Point3d( 0.50, -0.10, 0),    //  3  Bauch rechts (breiteste Stelle)
+                new Point3d( 0.40,  0.15, 0),    //  4  Schulter rechts
+                new Point3d( 0.15,  0.40, 0),    //  5  Zur Spitze rechts
+                new Point3d( 0.00,  0.50, 0),    //  6  Spitze (oben)
+                new Point3d(-0.15,  0.40, 0),    //  7  Zur Spitze links (symmetrisch zu 5)
+                new Point3d(-0.40,  0.15, 0),    //  8  Schulter links (symmetrisch zu 4)
+                new Point3d(-0.50, -0.10, 0),    //  9  Bauch links (symmetrisch zu 3)
+                new Point3d(-0.48, -0.35, 0),    // 10  Flanke links (symmetrisch zu 2)
+                new Point3d(-0.30, -0.50, 0),    // 11  Boden links (symmetrisch zu 1)
+            };
 
-            var cv = new Point3d[5];
-            cv[0] = pTip;
-
-            // WICHTIG FÜR SPITZE: 
-            // Der zweite Punkt muss Y < 0.5 haben. 
-            // Vektor (0.1, -0.15) erzwingt einen steilen Abgang -> Spitze.
-            // Wäre Y=0.5, wäre es oben rund (tangential horizontal).
-            cv[1] = new Point3d(0.12, 0.35, 0);
-
-            // WICHTIG FÜR BAUCH:
-            // Y = -0.15 zieht den Bauch unter die Mitte (0.0).
-            cv[2] = new Point3d(0.55, -0.15, 0);
-
-            // Überleitung zum Boden
-            cv[3] = new Point3d(0.55, -0.5, 0);
-            cv[4] = pBottom;
-
-            // Rechte Hälfte erstellen
-            var rightSide = Curve.CreateControlPointCurve(cv, 3);
-
-            // Spiegeln
-            var leftSide = rightSide.DuplicateCurve();
-            leftSide.Transform(Transform.Mirror(Plane.WorldYZ));
-            leftSide.Reverse();
-
-            // Join erzeugt den Knick an der Spitze (G0 Continuity), da Tangenten nicht kollinear sind
-            var joined = Curve.JoinCurves(new Curve[] { rightSide, leftSide });
-            return joined[0];
+            return CreatePeriodicCurve(pts, 3);
         }
 
+        /// <summary>
+        /// Erstellt eine normierte Herzform in 1Ã—1 Box.
+        /// Komplett als EINE geschlossene periodische Grad-3 NurbsCurve â€”
+        /// kein Mirror, kein Join â†’ sauberes Offset() im BezelBuilder.
+        /// </summary>
         private static Curve CreateUnitHeart()
         {
-            Point3d pTip = new Point3d(0, -0.5, 0);
-            Point3d pCleft = new Point3d(0, 0.25, 0);
+            // Kontrollpunkte: volle Kontur, Start = Spitze unten.
+            //
+            //     Cleft (0, 0.30)
+            //    /   \          \
+            //  Lobe-L  Lobe-R
+            //   |               |
+            //  Breiteste      Breiteste
+            //   |               |
+            //  Flanke         Flanke
+            //    \             /
+            //     Spitze (0, -0.50)
+            //
+            var pts = new Point3d[]
+            {
+                new Point3d( 0.00, -0.50, 0),    //  0  Spitze unten
+                new Point3d( 0.18, -0.30, 0),    //  1  Flanke rechts unten
+                new Point3d( 0.48, -0.02, 0),    //  2  Breiteste Stelle rechts
+                new Point3d( 0.50,  0.30, 0),    //  3  Lobe-Aufstieg rechts
+                new Point3d( 0.35,  0.52, 0),    //  4  Lobe-Spitze rechts (hÃ¶chster Punkt)
+                new Point3d( 0.12,  0.42, 0),    //  5  Lobe-Abstieg rechts zum Cleft
+                new Point3d( 0.00,  0.30, 0),    //  6  Cleft (Kerbe oben Mitte)
+                new Point3d(-0.12,  0.42, 0),    //  7  Lobe-Abstieg links (symmetrisch zu 5)
+                new Point3d(-0.35,  0.52, 0),    //  8  Lobe-Spitze links (symmetrisch zu 4)
+                new Point3d(-0.50,  0.30, 0),    //  9  Lobe-Aufstieg links (symmetrisch zu 3)
+                new Point3d(-0.48, -0.02, 0),    // 10  Breiteste Stelle links (symmetrisch zu 2)
+                new Point3d(-0.18, -0.30, 0),    // 11  Flanke links unten (symmetrisch zu 1)
+            };
 
-            var cv = new Point3d[6];
-            cv[0] = pCleft;
-            cv[1] = new Point3d(0.1, 0.55, 0);  // Steil nach oben aus dem Cleft
-            cv[2] = new Point3d(0.40, 0.55, 0); // Top Bogen
-            cv[3] = new Point3d(0.65, 0.25, 0); // Breiteste Stelle
-            cv[4] = new Point3d(0.40, -0.30, 0); // Flanke zur Spitze
-            cv[5] = pTip;
+            return CreatePeriodicCurve(pts, 3);
+        }
 
-            var rightHeart = Curve.CreateControlPointCurve(cv, 3);
-            var leftHeart = rightHeart.DuplicateCurve();
-            leftHeart.Transform(Transform.Mirror(Plane.WorldYZ));
-            leftHeart.Reverse();
+        /// <summary>
+        /// Erstellt eine geschlossene periodische NurbsCurve aus Kontrollpunkten.
+        /// Periodisch = die letzten (degree) Punkte wrappen auf die ersten â†’
+        /// Ã¼berall gleiche Knotenstruktur, Ã¼berall mindestens G2, keine Nahtstelle.
+        /// Funktioniert wie Rhinos "Periodic=Yes" Option beim Curve-Command.
+        /// </summary>
+        private static NurbsCurve CreatePeriodicCurve(Point3d[] pts, int degree)
+        {
+            int n = pts.Length;          // Anzahl der einzigartigen Kontrollpunkte
+            int order = degree + 1;     // 4 bei Grad 3
 
-            var joined = Curve.JoinCurves(new Curve[] { rightHeart, leftHeart });
-            return joined[0];
+            // Periodische Kurve: wir wiederholen die ersten (degree) Punkte am Ende.
+            // â†’ n + degree Kontrollpunkte insgesamt.
+            int cpCount = n + degree;
+
+            // Knotenvektor: gleichmÃ¤ÃŸig, n + degree + degree = n + 2*degree Knoten.
+            // FÃ¼r periodische Kurven: alle Knoten haben MultiplizitÃ¤t 1 â†’ Ã¼berall G(degree-1).
+            int knotCount = cpCount + degree - 1;  // = n + 2*degree - 1
+
+            var nc = new NurbsCurve(degree, cpCount);
+
+            // Kontrollpunkte setzen: original + wrap-around
+            for (int i = 0; i < cpCount; i++)
+            {
+                nc.Points.SetPoint(i, pts[i % n]);
+            }
+
+            // GleichmÃ¤ÃŸiger Knotenvektor (uniform): 0, 1, 2, 3, ...
+            for (int i = 0; i < knotCount; i++)
+            {
+                nc.Knots[i] = i;
+            }
+
+            if (nc.IsValid) return nc;
+            return null;
         }
     }
 }
