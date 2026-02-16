@@ -81,15 +81,32 @@ namespace NewRhinoGold.BezelStudio
                 }
             }
 
+            // --- SEAM-ANPASSUNG ---
+            // Alle geschlossenen Kurven auf dieselbe Seam-Position und Richtung bringen,
+            // damit Lofts sauber joinen und keine verdrehten Flächen entstehen.
+            Curve[] allCurves = new[] { cOuterTop, cOuterBottom, cInnerTop, cInnerBottom, cGap, cSeatInner, cOuterMid };
+            AlignCurveSeams(allCurves, baseCurve, tol);
+
             // --- 2. FLÄCHEN (LOFTS) ---
             List<Brep> parts = new List<Brep>();
 
             // 1. Außenwand
+            // LoftType.Straight für konsistente Kanten mit den angrenzenden Rim-Flächen.
+            // Bei Bombing: Zusätzliche Zwischenprofile erzeugen statt LoftType.Normal,
+            // damit die Endkanten exakt auf den Profilen liegen.
             List<Curve> outerProfiles = new List<Curve> { cOuterTop };
-            if (cOuterMid != null) outerProfiles.Add(cOuterMid);
+            if (cOuterMid != null)
+            {
+                // Mit Bombing: Zwischenprofile für glatten Verlauf bei LoftType.Straight
+                Curve midTop = TweenCurve(cOuterTop, cOuterMid, 0.5);
+                if (midTop != null) outerProfiles.Add(midTop);
+                outerProfiles.Add(cOuterMid);
+                Curve midBottom = TweenCurve(cOuterMid, cOuterBottom, 0.5);
+                if (midBottom != null) outerProfiles.Add(midBottom);
+            }
             outerProfiles.Add(cOuterBottom);
-            var outerWall = Brep.CreateFromLoft(outerProfiles, Point3d.Unset, Point3d.Unset, LoftType.Normal, false);
-            if (AddIfValid(parts, outerWall)) { }
+            var outerWall = Brep.CreateFromLoft(outerProfiles, Point3d.Unset, Point3d.Unset, LoftType.Straight, false);
+            AddIfValid(parts, outerWall);
 
             // 2. Rand Oben (Rim)
             var topRim = Brep.CreateFromLoft(new[] { cOuterTop, cInnerTop }, Point3d.Unset, Point3d.Unset, LoftType.Straight, false);
@@ -118,33 +135,46 @@ namespace NewRhinoGold.BezelStudio
             Brep finalBezel = joined.OrderByDescending(b => b.GetArea()).FirstOrDefault();
             if (finalBezel == null) return null;
 
-            if (!finalBezel.IsSolid) finalBezel = finalBezel.CapPlanarHoles(tol);
+            if (!finalBezel.IsSolid)
+            {
+                finalBezel = finalBezel.CapPlanarHoles(tol);
+                // Zweiter Versuch mit höherer Toleranz, falls planare Caps nicht greifen
+                if (finalBezel != null && !finalBezel.IsSolid)
+                    finalBezel = finalBezel.CapPlanarHoles(tol * 10);
+            }
 
+            if (finalBezel == null || !finalBezel.IsValid) return null;
 
             // --- 4. CUTTER (Boolean Difference für Pavillon) ---
             // "Cutter sollte immer aktiv sein" -> Wir schneiden Platz für den Steinbauch
-
-            // Cutter Oben: Startet an der SeatInner Kante
-            Curve cutterTop = cSeatInner.DuplicateCurve();
-            cutterTop.Translate(plane.ZAxis * 0.01); // Minimal hoch, damit boolean sauber schneidet
-
-            // Cutter Unten: Spitze tief unten
-            Curve cutterBottom = cSeatInner.DuplicateCurve();
-            cutterBottom.Translate(plane.ZAxis * (zBottom - 2.0)); // unterhalb der Zarge
-            cutterBottom.Scale(0.01); // Spitze
-
-            var cutterLoft = Brep.CreateFromLoft(new[] { cutterTop, cutterBottom }, Point3d.Unset, Point3d.Unset, LoftType.Normal, false);
-            if (cutterLoft != null && cutterLoft.Length > 0)
+            try
             {
-                Brep cutterBrep = cutterLoft[0].CapPlanarHoles(tol);
-                if (cutterBrep != null)
+                // Cutter Oben: Startet an der SeatInner Kante
+                Curve cutterTop = cSeatInner.DuplicateCurve();
+                cutterTop.Translate(plane.ZAxis * 0.01); // Minimal hoch, damit boolean sauber schneidet
+
+                // Cutter Unten: Spitze tief unten
+                Curve cutterBottom = cSeatInner.DuplicateCurve();
+                cutterBottom.Translate(plane.ZAxis * (zBottom - 2.0)); // unterhalb der Zarge
+                cutterBottom.Scale(0.01); // Spitze
+
+                var cutterLoft = Brep.CreateFromLoft(new[] { cutterTop, cutterBottom }, Point3d.Unset, Point3d.Unset, LoftType.Straight, false);
+                if (cutterLoft != null && cutterLoft.Length > 0)
                 {
-                    Brep[] diff = Brep.CreateBooleanDifference(new[] { finalBezel }, new[] { cutterBrep }, tol);
-                    if (diff != null && diff.Length > 0)
+                    Brep cutterBrep = cutterLoft[0].CapPlanarHoles(tol);
+                    if (cutterBrep != null && cutterBrep.IsValid && cutterBrep.IsSolid)
                     {
-                        finalBezel = diff[0];
+                        Brep[] diff = Brep.CreateBooleanDifference(new[] { finalBezel }, new[] { cutterBrep }, tol);
+                        if (diff != null && diff.Length > 0 && diff[0].IsValid)
+                        {
+                            finalBezel = diff[0];
+                        }
                     }
                 }
+            }
+            catch
+            {
+                // Boolean Difference fehlgeschlagen — Bezel ohne Cutter zurückgeben
             }
 
             // --- 5. Z-OFFSET ---
@@ -153,7 +183,10 @@ namespace NewRhinoGold.BezelStudio
                 finalBezel.Translate(plane.ZAxis * p.ZOffset);
             }
 
-            return finalBezel;
+            // --- 6. FINALE VALIDIERUNG ---
+            if (!finalBezel.IsValid) finalBezel.Repair(tol);
+
+            return finalBezel.IsValid ? finalBezel : null;
         }
 
         // --- HELPER ---
@@ -168,26 +201,129 @@ namespace NewRhinoGold.BezelStudio
             return false;
         }
 
-        // Robuster Offset, der bei "Null"-Ergebnis (wegen Sharp corners) Round versucht
+        /// <summary>
+        /// Robuster Offset: Bei Mehrfach-Fragmenten werden alle Segmente gejoint.
+        /// Fallback-Kette: Sharp → Round → Smooth.
+        /// </summary>
         private static Curve OffsetCurveRobust(Curve crv, Plane plane, double dist)
         {
             if (Math.Abs(dist) < 0.001) return crv.DuplicateCurve();
 
-            // Versuch 1: Sharp (Ideal für Schmuck)
-            var offsets = crv.Offset(plane, dist, 0.001, CurveOffsetCornerStyle.Sharp);
+            CurveOffsetCornerStyle[] styles = {
+                CurveOffsetCornerStyle.Sharp,
+                CurveOffsetCornerStyle.Round,
+                CurveOffsetCornerStyle.Smooth
+            };
 
-            // Check ob Valid
-            if (offsets != null && offsets.Length > 0) return offsets[0];
+            foreach (var style in styles)
+            {
+                var offsets = crv.Offset(plane, dist, 0.001, style);
+                if (offsets == null || offsets.Length == 0) continue;
 
-            // Versuch 2: Round (Fallback, löst das "0.7 Gap Problem" bei komplexen Formen)
-            offsets = crv.Offset(plane, dist, 0.001, CurveOffsetCornerStyle.Round);
-            if (offsets != null && offsets.Length > 0) return offsets[0];
+                // Einzelnes Segment — direkt zurückgeben wenn geschlossen und valide
+                if (offsets.Length == 1 && offsets[0].IsClosed && offsets[0].IsValid)
+                    return offsets[0];
 
-            // Versuch 3: Smooth (Letzter Ausweg)
-            offsets = crv.Offset(plane, dist, 0.001, CurveOffsetCornerStyle.Smooth);
-            if (offsets != null && offsets.Length > 0) return offsets[0];
+                // Mehrere Segmente — joinen zu einer geschlossenen Kurve
+                if (offsets.Length > 1)
+                {
+                    Curve joined = JoinOffsetFragments(offsets);
+                    if (joined != null && joined.IsClosed && joined.IsValid)
+                        return joined;
+                }
+
+                // Einzelnes, aber offenes Segment — schließen versuchen
+                if (offsets.Length == 1 && !offsets[0].IsClosed && offsets[0].IsValid)
+                {
+                    var nc = offsets[0].ToNurbsCurve();
+                    if (nc != null)
+                    {
+                        // Gap zwischen Start und Ende prüfen
+                        double gap = nc.PointAtStart.DistanceTo(nc.PointAtEnd);
+                        if (gap < 0.1) // Kleiner Gap → Schließen erlaubt
+                        {
+                            nc.SetEndPoint(nc.PointAtStart);
+                            if (nc.IsClosed && nc.IsValid) return nc;
+                        }
+                    }
+                }
+            }
 
             return null;
+        }
+
+        /// <summary>
+        /// Joint mehrere Offset-Fragmente zu einer geschlossenen Kurve.
+        /// </summary>
+        private static Curve JoinOffsetFragments(Curve[] fragments)
+        {
+            if (fragments == null || fragments.Length == 0) return null;
+
+            var joined = Curve.JoinCurves(fragments, 0.01);
+            if (joined == null || joined.Length == 0) return null;
+
+            // Längste geschlossene Kurve suchen
+            Curve best = null;
+            double bestLen = 0;
+            foreach (var c in joined)
+            {
+                if (c.IsClosed && c.IsValid && c.GetLength() > bestLen)
+                {
+                    best = c;
+                    bestLen = c.GetLength();
+                }
+            }
+            if (best != null) return best;
+
+            // Keine geschlossene Kurve — längste offene Kurve schließen
+            best = joined.OrderByDescending(c => c.GetLength()).First();
+            if (!best.IsClosed)
+            {
+                var nc = best.ToNurbsCurve();
+                if (nc != null)
+                {
+                    double gap = nc.PointAtStart.DistanceTo(nc.PointAtEnd);
+                    if (gap < 0.1)
+                    {
+                        nc.SetEndPoint(nc.PointAtStart);
+                        if (nc.IsClosed && nc.IsValid) return nc;
+                    }
+                }
+            }
+
+            return best.IsValid ? best : null;
+        }
+
+        /// <summary>
+        /// Gleicht Seam-Positionen und Kurvenrichtungen aller geschlossenen Kurven an.
+        /// Referenz ist die Basiskurve des Steins.
+        /// </summary>
+        private static void AlignCurveSeams(Curve[] curves, Curve reference, double tol)
+        {
+            if (reference == null || !reference.IsClosed) return;
+
+            // Referenz-Seam-Punkt
+            Point3d seamPt = reference.PointAtStart;
+
+            foreach (var crv in curves)
+            {
+                if (crv == null || !crv.IsClosed) continue;
+
+                // Richtung angleichen (CounterClockwise prüfen über Fläche)
+                var area1 = AreaMassProperties.Compute(reference);
+                var area2 = AreaMassProperties.Compute(crv);
+                if (area1 != null && area2 != null)
+                {
+                    // Wenn Vorzeichen der Flächen unterschiedlich → Richtung umkehren
+                    bool refCCW = area1.Area > 0;
+                    bool crvCCW = area2.Area > 0;
+                    if (refCCW != crvCCW) crv.Reverse();
+                }
+
+                // Seam zum nächsten Punkt zur Referenz-Seam-Position verschieben
+                crv.ClosestPoint(seamPt, out double t);
+                crv.ChangeClosedCurveSeam(t);
+            }
         }
 
         private static Curve TweenCurve(Curve c1, Curve c2, double factor)
